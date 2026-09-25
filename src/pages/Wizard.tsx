@@ -1,15 +1,15 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { ENGINE_MODULES, ENGINE_VERSION, getLayerStatusForWizardStep } from '@/lib/engineData';
+import { ENGINE_MODULES, ENGINE_VERSION, SERVICE_URL } from '@/lib/engineData';
 import type {
   ChainConfig, Chain, SignatureScheme, PqcAlgorithm, MigrationTrigger, HashWidth,
-  EnvironmentMode, PeerDiscovery, AccountRole, GenesisAccount,
+  EnvironmentMode, PeerDiscovery, AccountRole, GenesisAccount, LocalChain,
 } from '@/types';
 import { JsonViewer } from '@/components/JsonViewer';
 import {
   ArrowLeft, ArrowRight, Check, Loader2, AlertCircle,
-  Settings, Cpu, Layers, Boxes, FileJson, Upload, X, Shield,
-  Globe, Network, Gauge, Users, Plus, Trash2,
+  Settings, Cpu, Layers, Boxes, FileJson, X, Shield,
+  Globe, Network, Gauge, Users, Plus, Trash2, Play, Square, Save,
 } from 'lucide-react';
 
 interface WizardProps {
@@ -27,10 +27,71 @@ const STEPS = [
   { id: 'network',      label: 'Network',     icon: Network  },
   { id: 'limits',       label: 'Limits',      icon: Gauge    },
   { id: 'accounts',     label: 'Accounts',    icon: Users    },
-  { id: 'generate',     label: 'Review',      icon: FileJson },
+  { id: 'generate',     label: 'Launch',      icon: FileJson },
 ];
 
 const newAccountId = () => `acct_${Math.random().toString(36).slice(2, 10)}`;
+
+// ── QCB Chain template ────────────────────────────────────────────────────────
+// One-click fill with QCB's exact production settings.
+// Matches qcb-genesis.json and the whitepaper v0.3.0.
+const QCB_TEMPLATE: Partial<ChainConfig> = {
+  basics: {
+    chainName:     'QCB Chain',
+    chainId:       'qcb-1',
+    tokenName:     'QuarkCharmBit',
+    tokenSymbol:   'QCB',
+    tokenDenom:    'uqcb',
+    addressPrefix: 'qcb1',
+    maxSupply:     '210000000',
+  },
+  environment: {
+    mode:          'testnet' as const,
+    faucetEnabled: false,   // no faucet on QCB — balances come from genesis allocation
+    relaxedLimits: false,   // strict limits from day one
+  },
+  consensus: {
+    mechanism:          'pos' as const,
+    validatorSetSize:   4,
+    blockTimeMs:        3500,
+    personhoodWeighted: true,
+  },
+  execution: {
+    stateModel:        'account' as const,
+    parallelExecution: false,
+    gasModel:          'dynamic' as const,
+    requireSignatures: true,
+  },
+  modules: {
+    selected:     ['bank', 'staking', 'identity', 'cirfi', 'agents'],
+    customModule: '',
+  },
+  cryptography: {
+    signatureScheme:  'classical' as const,
+    pqcAlgorithm:     null,
+    migrationTrigger: 'nist-guidance' as const,
+    hashWidth:        256 as const,
+    validatorScheme:  'same-as-accounts' as const,
+  },
+  genesisAccounts: {
+    accounts: [
+      { id: 'qcb-val-alice',  label: 'Alice (qcb1alice)',  address: 'qcb1alice',  balance: '10000000000', role: 'validator'  as const },
+      { id: 'qcb-val-bob',    label: 'Bob (qcb1bob)',      address: 'qcb1bob',    balance: '10000000000', role: 'validator'  as const },
+      { id: 'qcb-val-carol',  label: 'Carol (qcb1carol)',  address: 'qcb1carol',  balance: '10000000000', role: 'validator'  as const },
+      { id: 'qcb-val-dave',   label: 'Dave (qcb1dave)',    address: 'qcb1dave',   balance: '10000000000', role: 'validator'  as const },
+      { id: 'qcb-treasury',   label: 'Treasury',           address: '',           balance: '50000000000', role: 'treasury'   as const },
+    ],
+  },
+  network: {
+    networkId:      'qcb-1-net',
+    p2pPort:        26656,
+    rpcPort:        26657,
+    maxPeers:       50,
+    peerDiscovery:  'both' as const,
+    // Testnet VM IPs — update these if your VM addresses change
+    bootstrapNodes: '/ip4/10.0.0.90/tcp/26656\n/ip4/10.0.0.12/tcp/26656\n/ip4/10.0.0.181/tcp/26656\n/ip4/10.0.0.54/tcp/26656',
+  },
+};
 
 const DEFAULT_CONFIG: ChainConfig = {
   basics: {
@@ -43,30 +104,32 @@ const DEFAULT_CONFIG: ChainConfig = {
     maxSupply: '',
   },
   environment: {
-    mode: 'testnet',
+    mode: 'devnet',
     faucetEnabled: true,
     relaxedLimits: true,
   },
   consensus: {
     mechanism: 'pos',
     validatorSetSize: 4,
-    blockTimeMs: 5000,
+    blockTimeMs: 1000,
+    personhoodWeighted: false,
   },
   execution: {
     stateModel: 'account',
     parallelExecution: false,
     gasModel: 'dynamic',
+    requireSignatures: true,
   },
   modules: {
     selected: ['bank', 'staking'],
     customModule: '',
   },
   cryptography: {
-    signatureScheme: 'hybrid',
-    pqcAlgorithm: 'ml-dsa',
+    signatureScheme: 'classical',
+    pqcAlgorithm: null,
     migrationTrigger: 'nist-guidance',
     hashWidth: 256,
-    validatorScheme: 'pqc-native',
+    validatorScheme: 'same-as-accounts',
   },
   network: {
     networkId: '',
@@ -78,7 +141,7 @@ const DEFAULT_CONFIG: ChainConfig = {
   },
   limits: {
     maxBlockBytes: 1_048_576,   // 1 MiB
-    maxTxBytes: 65_536,         // 64 KiB — bump if using PQC
+    maxTxBytes: 65_536,         // 64 KiB
     blockGasLimit: 10_000_000,
     mempoolSize: 5_000,
     mempoolTtlSeconds: 300,
@@ -99,16 +162,72 @@ const PQC_MIN_TX_BYTES: Record<PqcAlgorithm, number> = {
   'sphincs-plus': 65_536,
 };
 
+/**
+ * Everything the engine would refuse, checked here first so a developer sees
+ * the problem before launching. Mirrors chain-forge-core enabled_modules()
+ * and chain-forge-service prepare_local_chain().
+ */
+function configProblems(config: ChainConfig): string[] {
+  const problems: string[] = [];
+  const mods = config.modules.selected;
+  const known = ENGINE_MODULES.map((m) => m.id);
+
+  for (const m of mods) {
+    if (!known.includes(m)) problems.push(`Module "${m}" is not supported by the engine.`);
+  }
+  for (const mod of ENGINE_MODULES) {
+    if (mods.includes(mod.id)) {
+      for (const dep of mod.requires ?? []) {
+        if (!mods.includes(dep)) problems.push(`${mod.name} requires the ${dep} module.`);
+      }
+    }
+  }
+  if (config.consensus.personhoodWeighted && !mods.includes('identity')) {
+    problems.push('Personhood-weighted consensus requires the identity module.');
+  }
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(config.basics.chainId) || ['.', '..'].includes(config.basics.chainId)) {
+    problems.push('Chain ID must be 1–64 characters of letters, digits, "-", "_" or ".".');
+  }
+  const accts = config.genesisAccounts.accounts;
+  if (!accts.some((a) => a.role === 'validator')) {
+    problems.push('At least one genesis account must be a validator.');
+  }
+  const typed = accts.map((a) => a.address.trim()).filter(Boolean);
+  const dup = typed.find((a, i) => typed.indexOf(a) !== i);
+  if (dup) problems.push(`Address "${dup}" is used by more than one account.`);
+  return problems;
+}
+
 export function Wizard({ onDone, onCancel }: WizardProps) {
   const [step, setStep] = useState(0);
   const [config, setConfig] = useState<ChainConfig>(DEFAULT_CONFIG);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [generated, setGenerated] = useState<Chain | null>(null);
+  const [launched, setLaunched] = useState<LocalChain | null>(null);
+
+  /** Fill all wizard fields with QCB's production settings. */
+  const applyQcbTemplate = () => {
+    setConfig(prev => ({
+      ...prev,
+      basics:         { ...prev.basics,         ...QCB_TEMPLATE.basics         },
+      environment:    { ...prev.environment,    ...QCB_TEMPLATE.environment    },
+      consensus:      { ...prev.consensus,      ...QCB_TEMPLATE.consensus      },
+      execution:      { ...prev.execution,      ...QCB_TEMPLATE.execution      },
+      modules:        { ...prev.modules,        ...QCB_TEMPLATE.modules        },
+      cryptography:   { ...prev.cryptography,   ...QCB_TEMPLATE.cryptography   },
+      network:        { ...prev.network,        ...QCB_TEMPLATE.network        },
+      // replace accounts with QCB's validator set
+      genesisAccounts: QCB_TEMPLATE.genesisAccounts ?? prev.genesisAccounts,
+    }));
+    setStep(0);
+  };
 
   const updateConfig = <K extends keyof ChainConfig>(key: K, value: Partial<ChainConfig[K]>) => {
     setConfig((prev) => ({ ...prev, [key]: { ...prev[key], ...value } }));
   };
+
+  const problems = useMemo(() => configProblems(config), [config]);
 
   const canProceed = useMemo(() => {
     const b = config.basics;
@@ -130,9 +249,9 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
                l.blockGasLimit > 0 && l.mempoolSize > 0 && l.mempoolTtlSeconds > 0;
       }
       case 'accounts': {
+        // Addresses may be blank: the service generates a key and derives one.
         const accts = config.genesisAccounts.accounts;
-        return accts.length > 0 &&
-               accts.every((a) => a.address.trim() !== '' && a.balance.trim() !== '');
+        return accts.length > 0 && accts.every((a) => a.balance.trim() !== '');
       }
       default:
         return true;
@@ -141,6 +260,8 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
 
   const genesisJson = useMemo(() => {
     const crypto = config.cryptography;
+    // bank is always on; keep it first and never duplicated.
+    const modules = ['bank', ...config.modules.selected.filter((m) => m !== 'bank')];
     return {
       chain_id: config.basics.chainId,
       chain_name: config.basics.chainName,
@@ -161,16 +282,16 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
         type: config.consensus.mechanism === 'pos' ? 'proof-of-stake' : 'proof-of-authority',
         validator_set_size: config.consensus.validatorSetSize,
         block_time_ms: config.consensus.blockTimeMs,
+        personhood_weighted: config.consensus.personhoodWeighted,
       },
       execution: {
         state_model: config.execution.stateModel,
         parallel_execution: config.execution.parallelExecution,
         gas_model: config.execution.gasModel,
+        require_signatures: config.execution.requireSignatures,
       },
-      modules: config.modules.selected,
-      custom_modules: config.modules.customModule.trim()
-        ? config.modules.customModule.split('\n').map((s) => s.trim()).filter(Boolean)
-        : [],
+      modules,
+      custom_modules: [],
       cryptography: {
         signature_scheme: crypto.signatureScheme,
         pqc_algorithm: crypto.signatureScheme !== 'classical' ? crypto.pqcAlgorithm : null,
@@ -196,66 +317,86 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
         mempool_ttl_seconds: config.limits.mempoolTtlSeconds,
       },
       genesis_accounts: config.genesisAccounts.accounts.map(({ label, address, balance, role }) => ({
-        label, address, balance, role,
+        label, address: address.trim(), balance, role,
       })),
       genesis_time: new Date().toISOString(),
     };
   }, [config]);
 
-  const NODE_API = 'http://localhost:8080';
+  /** Save to the dashboard (Supabase). Only public data: never private keys. */
+  const saveChain = async (
+    status: Chain['status'], genesis: Record<string, unknown>, logs: string,
+    nodeStatus: Record<string, unknown> | null,
+  ): Promise<boolean> => {
+    const { data, error } = await supabase
+      .from('chains')
+      .insert({
+        name: config.basics.chainName,
+        chain_id: config.basics.chainId,
+        status,
+        engine_version: ENGINE_VERSION,
+        config,
+        genesis_json: genesis,
+        build_logs: logs,
+        node_status: nodeStatus,
+        explorer_url: null,
+        repo_url: null,
+      })
+      .select()
+      .single();
+    if (error) {
+      setSaveError(`Saved nothing to the dashboard: ${error.message}`);
+      return false;
+    }
+    setGenerated(data as Chain);
+    return true;
+  };
 
-  const handleGenerate = async () => {
+  const handleLaunch = async () => {
     setSaving(true);
     setSaveError(null);
 
-    // 1. Try to call the node's build API
-    let nodeResponse: { status: string; message: string; node_status_url?: string } | null = null;
+    let chain: LocalChain;
     try {
-      const res = await fetch(`${NODE_API}/api/build`, {
+      const res = await fetch(`${SERVICE_URL}/api/chains`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(genesisJson),
       });
-      nodeResponse = await res.json();
+      const body = await res.json();
+      if (!res.ok) {
+        setSaveError(body?.error ?? `The Chain Forge service returned HTTP ${res.status}.`);
+        setSaving(false);
+        return;
+      }
+      chain = body as LocalChain;
     } catch {
-      // Node not running — that's fine in Phase 0, just save to Supabase
-      nodeResponse = null;
-    }
-
-    // 2. Save to Supabase regardless
-    const insertData = {
-      name: config.basics.chainName,
-      chain_id: config.basics.chainId,
-      status: (nodeResponse?.status === 'accepted' ? 'building' : 'draft') as 'building' | 'draft',
-      engine_version: ENGINE_VERSION,
-      config,
-      genesis_json: genesisJson,
-      build_logs: nodeResponse
-        ? `Node response: ${nodeResponse.message}`
-        : 'Node not reachable — config saved as draft. Start chain-forge-node and regenerate to connect.',
-      node_status: nodeResponse ? { url: nodeResponse.node_status_url } : null,
-      explorer_url: null,
-      repo_url: null,
-    };
-
-    const { data, error } = await supabase
-      .from('chains')
-      .insert(insertData)
-      .select()
-      .single();
-
-    if (error) {
-      setSaveError(error.message);
+      setSaveError(
+        'Could not reach the Chain Forge service at ' + SERVICE_URL + '. Start it with ' +
+        '.\\target\\release\\chain-forge-service.exe in C:\\Dev\\chain-forge-engine, then try again. ' +
+        'Or use "Save draft only".',
+      );
       setSaving(false);
       return;
     }
 
-    setGenerated(data as Chain);
+    setLaunched(chain);
+    // The genesis as actually run: generated addresses and PUBLIC keys filled in.
+    await saveChain('running', chain.genesis ?? genesisJson,
+      `Launched locally: ${chain.nodes.length} validator node(s). Files in ${chain.dir}`,
+      { service_url: SERVICE_URL, chain_id: chain.chain_id, nodes: chain.nodes.map((n) => ({ validator: n.validator, api_url: n.api_url })) });
     setSaving(false);
   };
 
-  const generateStatus = getLayerStatusForWizardStep('generate');
+  const handleSaveDraft = async () => {
+    setSaving(true);
+    setSaveError(null);
+    await saveChain('draft', genesisJson, 'Saved as a draft. Not launched.', null);
+    setSaving(false);
+  };
+
   const currentId = STEPS[step].id;
+  const done = generated !== null || launched !== null;
 
   return (
     <div className="p-8 max-w-4xl">
@@ -266,10 +407,20 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
             Configure a blockchain on the Chain Forge engine
           </p>
         </div>
-        <button onClick={onCancel} className="btn-ghost flex items-center gap-2">
-          <X size={16} />
-          Cancel
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={applyQcbTemplate}
+            className="flex items-center gap-2 rounded-lg border border-purple-500/40 bg-purple-500/10 px-3 py-1.5 text-xs font-medium text-purple-300 hover:bg-purple-500/20 transition-colors"
+            title="Fill all fields with QCB Chain's production settings"
+          >
+            <Cpu size={12} />
+            QCB Template
+          </button>
+          <button onClick={onCancel} className="btn-ghost flex items-center gap-2">
+            <X size={16} />
+            Cancel
+          </button>
+        </div>
       </div>
 
       {/* Step indicator */}
@@ -279,7 +430,6 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
             const Icon = s.icon;
             const isActive = i === step;
             const isComplete = i < step;
-            const layerStatus = getLayerStatusForWizardStep(s.id);
             return (
               <div key={s.id} className="relative flex flex-col items-center gap-2 z-10">
                 <div
@@ -296,9 +446,6 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
                 <span className={`text-[11px] font-medium ${isActive ? 'text-white' : 'text-ink-400'}`}>
                   {s.label}
                 </span>
-                {layerStatus === 'coming-soon' && (
-                  <span className="text-[9px] text-ink-500 italic">soon</span>
-                )}
               </div>
             );
           })}
@@ -315,9 +462,9 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
       <div className="card p-7 animate-fade-in" key={step}>
         {currentId === 'basics'       && <StepBasics       config={config.basics}       update={updateConfig} />}
         {currentId === 'environment'  && <StepEnvironment  config={config.environment}  update={updateConfig} />}
-        {currentId === 'consensus'    && <StepConsensus    config={config.consensus}    update={updateConfig} />}
+        {currentId === 'consensus'    && <StepConsensus    config={config.consensus}    modules={config.modules} update={updateConfig} />}
         {currentId === 'execution'    && <StepExecution    config={config.execution}    update={updateConfig} />}
-        {currentId === 'modules'      && <StepModules      config={config.modules}      update={updateConfig} />}
+        {currentId === 'modules'      && <StepModules      config={config.modules}      consensus={config.consensus} update={updateConfig} />}
         {currentId === 'cryptography' && <StepCryptography config={config.cryptography} update={updateConfig} />}
         {currentId === 'network'      && <StepNetwork      config={config.network}      basics={config.basics} update={updateConfig} />}
         {currentId === 'limits'       && <StepLimits       config={config.limits}       crypto={config.cryptography} update={updateConfig} />}
@@ -326,17 +473,19 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
           <StepGenerate
             genesisJson={genesisJson}
             config={config}
+            problems={problems}
             saving={saving}
             saveError={saveError}
             generated={generated}
-            generateStatus={generateStatus}
-            onGenerate={handleGenerate}
+            launched={launched}
+            onLaunch={handleLaunch}
+            onSaveDraft={handleSaveDraft}
           />
         )}
       </div>
 
       {/* Navigation */}
-      {!generated && (
+      {!done && (
         <div className="flex items-center justify-between mt-6">
           <button
             onClick={() => (step === 0 ? onCancel() : setStep(step - 1))}
@@ -359,7 +508,7 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
         </div>
       )}
 
-      {generated && (
+      {done && (
         <div className="flex items-center justify-end mt-6">
           <button onClick={onDone} className="btn-primary flex items-center gap-2">
             <Check size={16} />
@@ -401,11 +550,14 @@ function OptionCard({
   );
 }
 
-function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
+function Toggle({ on, onClick, disabled }: { on: boolean; onClick: () => void; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${on ? 'bg-forge-500' : 'bg-ink-600'}`}
+      disabled={disabled}
+      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${on ? 'bg-forge-500' : 'bg-ink-600'} ${
+        disabled ? 'opacity-50 cursor-not-allowed' : ''
+      }`}
     >
       <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${on ? 'translate-x-6' : 'translate-x-1'}`} />
     </button>
@@ -419,6 +571,11 @@ function Warn({ children }: { children: React.ReactNode }) {
       <p className="text-xs text-ink-300">{children}</p>
     </div>
   );
+}
+
+/** Small tag for options the engine records in genesis but does not act on yet. */
+function NotYet() {
+  return <span className="text-[10px] text-ink-500 italic">not yet supported</span>;
 }
 
 // --- Step: Basics ---
@@ -440,6 +597,7 @@ function StepBasics({ config, update }: { config: ChainConfig['basics']; update:
           <input type="text" value={config.chainId}
             onChange={(e) => update('basics', { chainId: e.target.value })}
             className="input-mono" placeholder="e.g. qcb-testnet-1" />
+          <p className="text-xs text-ink-400 mt-1.5">Letters, digits, "-", "_" and "." only. It also names the chain's folder.</p>
         </div>
         <div>
           <label className="label">Address Prefix</label>
@@ -479,8 +637,8 @@ function StepBasics({ config, update }: { config: ChainConfig['basics']; update:
 // --- Step: Environment ---
 function StepEnvironment({ config, update }: { config: ChainConfig['environment']; update: Update }) {
   const MODES: { id: EnvironmentMode; label: string; desc: string }[] = [
-    { id: 'devnet',  label: 'Devnet',  desc: 'Local single-machine development. Faucet on, limits relaxed, throwaway state.' },
-    { id: 'testnet', label: 'Testnet', desc: 'Multi-node public test network. Faucet on, real consensus, no real value.' },
+    { id: 'devnet',  label: 'Devnet',  desc: 'Local development on this machine. Faucet on, limits relaxed, throwaway state.' },
+    { id: 'testnet', label: 'Testnet', desc: 'Multi-node test network. Faucet on, real consensus, no real value.' },
     { id: 'mainnet', label: 'Mainnet', desc: 'Production. Faucet off, strict limits, real value at stake.' },
   ];
 
@@ -498,7 +656,6 @@ function StepEnvironment({ config, update }: { config: ChainConfig['environment'
       <h2 className="text-lg font-semibold text-white mb-1">Environment</h2>
       <p className="text-sm text-ink-300 mb-6">
         What kind of network is this? Sets defaults for faucet, limits, and safety rails.
-        QCB will run as testnet for years before mainnet (Whitepaper Section 11).
       </p>
 
       <div className="space-y-5">
@@ -514,9 +671,9 @@ function StepEnvironment({ config, update }: { config: ChainConfig['environment'
 
         {config.mode === 'mainnet' && (
           <Warn>
-            <span className="text-warn-300 font-medium">Mainnet selected. </span>
-            The Chain Forge engine has no consensus, P2P, execution, or state layer built yet
-            (Engine Status). This config will be saved, but there is nothing to run it on.
+            <span className="text-warn-300 font-medium">Not ready for real value yet. </span>
+            The engine runs, but state is kept in memory only (a restarted node starts over from genesis),
+            consensus votes are not yet signed, and the code has not had a security audit. See Engine Status.
           </Warn>
         )}
 
@@ -543,13 +700,23 @@ function StepEnvironment({ config, update }: { config: ChainConfig['environment'
 }
 
 // --- Step: Consensus ---
-function StepConsensus({ config, update }: { config: ChainConfig['consensus']; update: Update }) {
+function StepConsensus({
+  config, modules, update,
+}: { config: ChainConfig['consensus']; modules: ChainConfig['modules']; update: Update }) {
+  const togglePersonhood = () => {
+    const on = !config.personhoodWeighted;
+    update('consensus', { personhoodWeighted: on });
+    // Personhood needs an identity layer: switching it on selects identity.
+    if (on && !modules.selected.includes('identity')) {
+      update('modules', { selected: [...modules.selected, 'identity'] });
+    }
+  };
+
   return (
     <div>
       <h2 className="text-lg font-semibold text-white mb-1">Consensus</h2>
       <p className="text-sm text-ink-300 mb-6">
-        Select the consensus mechanism and validator parameters. Personhood-weighted BFT is QCB's native mode
-        — other options are available for general-purpose chains.
+        Byzantine-fault-tolerant consensus: blocks are final once more than two-thirds of validator power agrees.
       </p>
 
       <div className="space-y-5">
@@ -557,12 +724,24 @@ function StepConsensus({ config, update }: { config: ChainConfig['consensus']; u
           <label className="label">Consensus Mechanism</label>
           <div className="grid grid-cols-2 gap-3">
             <OptionCard selected={config.mechanism === 'pos'} onClick={() => update('consensus', { mechanism: 'pos' })}
-              title="Proof of Stake (Personhood-Bounded)"
-              desc="Validator power capped per verified human — QCB default (Section 3)" />
+              title="Proof of Stake"
+              desc="Validators secure the chain with staked tokens." />
             <OptionCard selected={config.mechanism === 'poa'} onClick={() => update('consensus', { mechanism: 'poa' })}
               title="Proof of Authority"
-              desc="Fixed authority set — useful for private/consortium chains" />
+              desc="A fixed set of known validators. Currently runs the same BFT engine as Proof of Stake."
+              right={<NotYet />} />
           </div>
+        </div>
+
+        <div className="flex items-center justify-between p-4 rounded-lg border border-ink-600 bg-ink-900/50">
+          <div>
+            <div className="text-sm font-medium text-white">Personhood-Weighted Voting Power</div>
+            <div className="text-xs text-ink-400 mt-0.5">
+              Cap each validator's voting power per verified human, so no one can buy control with money alone.
+              Requires the Identity module, which is selected automatically. QCB uses this.
+            </div>
+          </div>
+          <Toggle on={config.personhoodWeighted} onClick={togglePersonhood} />
         </div>
 
         <div className="grid grid-cols-2 gap-5">
@@ -571,14 +750,16 @@ function StepConsensus({ config, update }: { config: ChainConfig['consensus']; u
             <input type="number" value={config.validatorSetSize} min={1} max={200}
               onChange={(e) => update('consensus', { validatorSetSize: Number(e.target.value) })}
               className="input-mono" />
-            <p className="text-xs text-ink-400 mt-1.5">Testnet: 4–10. Mainnet: 50–100. See Whitepaper Q14 re: liveness.</p>
+            <p className="text-xs text-ink-400 mt-1.5">
+              Testnet: 4–10. Tolerates up to one-third of validators failing, so 4 is the smallest fault-tolerant set.
+            </p>
           </div>
           <div>
             <label className="label">Block Time (ms)</label>
             <input type="number" value={config.blockTimeMs} min={500} max={30000} step={500}
               onChange={(e) => update('consensus', { blockTimeMs: Number(e.target.value) })}
               className="input-mono" />
-            <p className="text-xs text-ink-400 mt-1.5">5000ms = 5s blocks. Lower = faster but harder on validators.</p>
+            <p className="text-xs text-ink-400 mt-1.5">1000ms = 1s blocks. Lower = faster but harder on validators.</p>
           </div>
         </div>
       </div>
@@ -591,16 +772,35 @@ function StepExecution({ config, update }: { config: ChainConfig['execution']; u
   return (
     <div>
       <h2 className="text-lg font-semibold text-white mb-1">Execution Engine</h2>
-      <p className="text-sm text-ink-300 mb-6">State model, gas metering, and execution strategy.</p>
+      <p className="text-sm text-ink-300 mb-6">State model, gas metering, and transaction rules.</p>
 
       <div className="space-y-5">
+        <div className="flex items-center justify-between p-4 rounded-lg border border-ink-600 bg-ink-900/50">
+          <div>
+            <div className="text-sm font-medium text-white">Require Signed Transactions</div>
+            <div className="text-xs text-ink-400 mt-0.5">
+              Every transaction must be signed by the key bound to its sender. Leave this on.
+            </div>
+          </div>
+          <Toggle on={config.requireSignatures} onClick={() => update('execution', { requireSignatures: !config.requireSignatures })} />
+        </div>
+        {!config.requireSignatures && (
+          <Warn>
+            <span className="text-warn-300 font-medium">Anyone can spend anyone's funds. </span>
+            With signatures off, a transaction claiming to come from any account is accepted. Only for throwaway local testing.
+          </Warn>
+        )}
+
         <div>
           <label className="label">State Model</label>
           <div className="grid grid-cols-3 gap-3">
             {(['account', 'utxo', 'hybrid'] as const).map((m) => (
-              <OptionCard key={m} selected={config.stateModel === m} onClick={() => update('execution', { stateModel: m })}
+              <OptionCard key={m} selected={config.stateModel === m}
+                disabled={m !== 'account'}
+                onClick={() => m === 'account' && update('execution', { stateModel: m })}
                 title={m.charAt(0).toUpperCase() + m.slice(1)}
-                desc={m === 'account' ? 'Ethereum-style account balances' : m === 'utxo' ? 'Bitcoin-style unspent outputs' : 'Mixed model (QCB default)'} />
+                desc={m === 'account' ? 'Ethereum-style account balances' : m === 'utxo' ? 'Bitcoin-style unspent outputs' : 'Mixed model'}
+                right={m !== 'account' ? <NotYet /> : null} />
             ))}
           </div>
         </div>
@@ -611,17 +811,17 @@ function StepExecution({ config, update }: { config: ChainConfig['execution']; u
             {(['fixed', 'dynamic', 'eip-1559-style'] as const).map((m) => (
               <OptionCard key={m} selected={config.gasModel === m} onClick={() => update('execution', { gasModel: m })}
                 title={m === 'eip-1559-style' ? 'EIP-1559 Style' : m.charAt(0).toUpperCase() + m.slice(1)}
-                desc={m === 'fixed' ? 'Flat fee per tx' : m === 'dynamic' ? 'Market-driven fee' : 'Base + priority fee with burns'} />
+                desc={m === 'fixed' ? 'Flat fee per tx' : m === 'dynamic' ? 'Fee scales with size and operation' : 'Base fee plus priority tip'} />
             ))}
           </div>
         </div>
 
-        <div className="flex items-center justify-between p-4 rounded-lg border border-ink-600 bg-ink-900/50">
+        <div className="flex items-center justify-between p-4 rounded-lg border border-ink-600 bg-ink-900/50 opacity-60">
           <div>
-            <div className="text-sm font-medium text-white">Parallel Execution</div>
-            <div className="text-xs text-ink-400 mt-0.5">Execute non-conflicting transactions concurrently. Not yet implemented in the engine.</div>
+            <div className="text-sm font-medium text-white flex items-center gap-2">Parallel Execution <NotYet /></div>
+            <div className="text-xs text-ink-400 mt-0.5">Execute non-conflicting transactions concurrently.</div>
           </div>
-          <Toggle on={config.parallelExecution} onClick={() => update('execution', { parallelExecution: !config.parallelExecution })} />
+          <Toggle on={false} onClick={() => {}} disabled />
         </div>
       </div>
     </div>
@@ -629,13 +829,30 @@ function StepExecution({ config, update }: { config: ChainConfig['execution']; u
 }
 
 // --- Step: Modules ---
-function StepModules({ config, update }: { config: ChainConfig['modules']; update: Update }) {
+function StepModules({
+  config, consensus, update,
+}: { config: ChainConfig['modules']; consensus: ChainConfig['consensus']; update: Update }) {
+  const byId = Object.fromEntries(ENGINE_MODULES.map((m) => [m.id, m]));
+
   const toggleModule = (id: string) => {
-    const selected = config.selected.includes(id)
-      ? config.selected.filter((m) => m !== id)
-      : [...config.selected, id];
-    update('modules', { selected });
+    const mod = byId[id];
+    if (!mod || mod.required) return;
+    if (config.selected.includes(id)) {
+      // Deselecting also removes everything that depends on it.
+      const dependents = ENGINE_MODULES.filter((m) => m.requires?.includes(id)).map((m) => m.id);
+      const selected = config.selected.filter((m) => m !== id && !dependents.includes(m));
+      update('modules', { selected });
+      if (id === 'identity' && consensus.personhoodWeighted) {
+        update('consensus', { personhoodWeighted: false });
+      }
+    } else {
+      // Selecting also selects what it depends on.
+      const selected = Array.from(new Set([...config.selected, id, ...(mod.requires ?? [])]));
+      update('modules', { selected });
+    }
   };
+
+  const isOn = (id: string) => byId[id]?.required || config.selected.includes(id);
 
   const grouped = ENGINE_MODULES.reduce<Record<string, typeof ENGINE_MODULES>>((acc, mod) => {
     if (!acc[mod.category]) acc[mod.category] = [];
@@ -646,7 +863,9 @@ function StepModules({ config, update }: { config: ChainConfig['modules']; updat
   return (
     <div>
       <h2 className="text-lg font-semibold text-white mb-1">Engine Modules</h2>
-      <p className="text-sm text-ink-300 mb-6">Select built-in modules and add custom Rust module paths.</p>
+      <p className="text-sm text-ink-300 mb-6">
+        Choose what your chain can do. The engine refuses any module it doesn't implement, so only real ones are listed.
+      </p>
 
       <div className="space-y-6">
         {Object.entries(grouped).map(([category, mods]) => (
@@ -655,27 +874,30 @@ function StepModules({ config, update }: { config: ChainConfig['modules']; updat
             <div className="grid grid-cols-2 gap-3">
               {mods.map((mod) => (
                 <OptionCard key={mod.id} disabled={!mod.available}
-                  selected={config.selected.includes(mod.id)}
-                  onClick={() => mod.available && toggleModule(mod.id)}
-                  title={mod.name} desc={mod.description}
+                  selected={isOn(mod.id)}
+                  onClick={() => toggleModule(mod.id)}
+                  title={mod.name}
+                  desc={mod.requires?.length ? `${mod.description} Requires: ${mod.requires.join(', ')}.` : mod.description}
                   right={
-                    config.selected.includes(mod.id)
-                      ? <Check size={16} className="text-forge-400" />
-                      : !mod.available ? <span className="text-[10px] text-ink-500 italic">soon</span> : null
+                    mod.required
+                      ? <span className="text-[10px] text-ink-400 italic">always on</span>
+                      : isOn(mod.id) ? <Check size={16} className="text-forge-400" /> : null
                   } />
               ))}
             </div>
           </div>
         ))}
 
-        <div>
-          <label className="label flex items-center gap-2"><Upload size={14} />Custom Rust Module Paths</label>
-          <textarea value={config.customModule}
-            onChange={(e) => update('modules', { customModule: e.target.value })}
-            className="input-mono h-24 resize-none"
-            placeholder={"One path per line, e.g.:\ncrates/qcb-charm-confinement\ncrates/qcb-cirfi"} />
-          <p className="text-xs text-ink-400 mt-1.5">
-            For porting QCB-specific modules (Charm Confinement, Intrinsic Charm, CirFi, Charmed Agents). The engine will compile these during the build step.
+        {consensus.personhoodWeighted && (
+          <p className="text-xs text-ink-400">
+            Identity is also needed by personhood-weighted consensus (Consensus step). Deselecting it turns that off too.
+          </p>
+        )}
+
+        <div className="p-3 rounded-lg border border-ink-700 bg-ink-900/30">
+          <p className="text-xs text-ink-400">
+            <span className="text-ink-200 font-medium">Custom modules: </span>
+            not supported yet. The engine refuses a genesis that lists one, rather than silently ignoring it.
           </p>
         </div>
       </div>
@@ -704,27 +926,26 @@ function StepCryptography({ config, update }: { config: ChainConfig['cryptograph
     <div>
       <h2 className="text-lg font-semibold text-white mb-1">Cryptographic Primitives</h2>
       <p className="text-sm text-ink-300 mb-4">
-        Post-quantum security for signatures, hashing, and validator keys. Whitepaper Section 10 — a constitutional-layer setting.
+        Signature scheme, hash width, and the plan for moving to post-quantum signatures.
       </p>
 
-      {showPqcOptions && config.pqcAlgorithm === 'ml-dsa' && (
-        <Warn>
-          <span className="text-warn-300 font-medium">Size tradeoff: </span>
-          ML-DSA signatures are ~2.4 KB vs ECDSA's 64 bytes. This directly affects merchant payment throughput
-          (Whitepaper Section 8). The Limits step will flag if your max tx size is too small. See Open Question 16.
-        </Warn>
-      )}
+      <Warn>
+        <span className="text-warn-300 font-medium">What the engine does today: </span>
+        transactions are signed with Ed25519 (classical) whatever you choose here. Hybrid and post-quantum
+        choices are recorded in the genesis as your chain's migration plan, but are not enforced yet.
+      </Warn>
 
       <div className="space-y-6">
         <div>
           <label className="label">Signature Scheme</label>
           <div className="grid grid-cols-3 gap-3">
             {([
-              { id: 'classical' as SignatureScheme,  label: 'Classical',  desc: "ECDSA only. Vulnerable to Shor's algorithm once a CRQC exists." },
-              { id: 'hybrid' as SignatureScheme,     label: 'Hybrid',     desc: 'ECDSA + PQC in parallel. Migration-safe, higher signature overhead.' },
-              { id: 'pqc-native' as SignatureScheme, label: 'PQC-Native', desc: 'Post-quantum only from genesis. Most future-proof, largest sigs.' },
+              { id: 'classical' as SignatureScheme,  label: 'Classical',  desc: 'Ed25519. What the engine runs today.' },
+              { id: 'hybrid' as SignatureScheme,     label: 'Hybrid',     desc: 'Classical + post-quantum in parallel. Recorded, not enforced yet.' },
+              { id: 'pqc-native' as SignatureScheme, label: 'PQC-Native', desc: 'Post-quantum only. Recorded, not enforced yet.' },
             ]).map((s) => (
               <OptionCard key={s.id} selected={config.signatureScheme === s.id} title={s.label} desc={s.desc}
+                right={s.id !== 'classical' ? <NotYet /> : null}
                 onClick={() => update('cryptography', {
                   signatureScheme: s.id,
                   pqcAlgorithm: s.id === 'classical' ? null : (config.pqcAlgorithm ?? 'ml-dsa'),
@@ -759,7 +980,7 @@ function StepCryptography({ config, update }: { config: ChainConfig['cryptograph
               <OptionCard selected={config.validatorScheme === 'pqc-native'}
                 onClick={() => update('cryptography', { validatorScheme: 'pqc-native' })}
                 title="PQC-Native (Validators)"
-                desc="Validators always use PQC regardless of account scheme. Recommended for QCB (Whitepaper 10.2)." />
+                desc="Validators always use PQC regardless of account scheme." />
             </div>
           </div>
         )}
@@ -779,7 +1000,7 @@ function StepCryptography({ config, update }: { config: ChainConfig['cryptograph
 
         <div>
           <label className="label">Migration Trigger</label>
-          <p className="text-xs text-ink-400 mb-3">Constitutional condition that initiates migration to a new signature scheme (Whitepaper 10.3 / Open Question 16).</p>
+          <p className="text-xs text-ink-400 mb-3">The condition that starts migration to a new signature scheme.</p>
           <div className="space-y-2">
             {MIGRATION_TRIGGERS.map((t) => (
               <div key={t.id} className="w-full">
@@ -789,14 +1010,6 @@ function StepCryptography({ config, update }: { config: ChainConfig['cryptograph
               </div>
             ))}
           </div>
-        </div>
-
-        <div className="p-3 rounded-lg border border-ink-700 bg-ink-900/30">
-          <p className="text-xs text-ink-400">
-            <span className="text-ink-200 font-medium">Engine status: </span>
-            Post-quantum signature support is not yet implemented in the Chain Forge Rust engine. This configuration is
-            recorded in the genesis JSON and will govern the cryptographic layer once it's built.
-          </p>
         </div>
       </div>
     </div>
@@ -808,7 +1021,7 @@ function StepNetwork({ config, basics, update }: { config: ChainConfig['network'
   const suggestedNetworkId = basics.chainId ? `${basics.chainId}-net` : '';
 
   const DISCOVERY: { id: PeerDiscovery; label: string; desc: string }[] = [
-    { id: 'mdns',      label: 'mDNS',      desc: 'Auto-discover peers on the local network. Devnet only — does not work across the internet.' },
+    { id: 'mdns',      label: 'mDNS',      desc: 'Auto-discover peers on the local network. Does not work across the internet.' },
     { id: 'bootstrap', label: 'Bootstrap', desc: 'Connect to a fixed list of known nodes below. Required for testnet/mainnet.' },
     { id: 'both',      label: 'Both',      desc: 'mDNS for local peers, bootstrap list for remote. Sensible default.' },
   ];
@@ -817,7 +1030,8 @@ function StepNetwork({ config, basics, update }: { config: ChainConfig['network'
     <div>
       <h2 className="text-lg font-semibold text-white mb-1">Network & P2P</h2>
       <p className="text-sm text-ink-300 mb-6">
-        How nodes find and talk to each other. The engine cannot start a node without these.
+        How nodes find and talk to each other on a real multi-machine network. When you launch locally,
+        Chain Forge picks free ports and connects your validators to each other automatically.
       </p>
 
       <div className="space-y-5">
@@ -827,7 +1041,7 @@ function StepNetwork({ config, basics, update }: { config: ChainConfig['network'
             <input type="text" value={config.networkId}
               onChange={(e) => update('network', { networkId: e.target.value })}
               className="input-mono" placeholder={suggestedNetworkId || 'e.g. qcb-testnet-1-net'} />
-            <p className="text-xs text-ink-400 mt-1.5">Distinguishes this P2P network from other chains. Nodes with a different ID refuse to peer.</p>
+            <p className="text-xs text-ink-400 mt-1.5">Distinguishes this P2P network from other chains.</p>
           </div>
           <div>
             <label className="label">P2P Port</label>
@@ -864,9 +1078,9 @@ function StepNetwork({ config, basics, update }: { config: ChainConfig['network'
           <textarea value={config.bootstrapNodes}
             onChange={(e) => update('network', { bootstrapNodes: e.target.value })}
             className="input-mono h-24 resize-none"
-            placeholder={"One multiaddr per line, e.g.:\n/ip4/203.0.113.10/tcp/26656/p2p/12D3KooW...\n/dns4/seed1.qcb.network/tcp/26656/p2p/12D3KooW..."} />
+            placeholder={"One multiaddr per line, e.g.:\n/ip4/203.0.113.10/tcp/26656\n/ip4/203.0.113.11/tcp/26656"} />
           <p className="text-xs text-ink-400 mt-1.5">
-            Leave empty for devnet with mDNS. For testnet/mainnet you'll fill these in once your first nodes have peer IDs.
+            Leave empty for a local launch. For a network across machines, list each validator's address.
           </p>
         </div>
 
@@ -896,14 +1110,14 @@ function StepLimits({ config, crypto, update }: { config: ChainConfig['limits'];
     <div>
       <h2 className="text-lg font-semibold text-white mb-1">Block & Mempool Limits</h2>
       <p className="text-sm text-ink-300 mb-4">
-        Hard caps the engine enforces. These interact directly with your signature scheme choice.
+        Hard caps the engine enforces.
       </p>
 
       {txTooSmallForPqc && (
         <Warn>
           <span className="text-warn-300 font-medium">Max tx size too small for {pqcAlgo}: </span>
-          a single {pqcAlgo} signature needs roughly {fmtBytes(pqcMin)} of headroom, but max tx size is
-          {' '}{fmtBytes(config.maxTxBytes)}. Transactions will be rejected. Raise max tx bytes to at least {fmtBytes(pqcMin)}.
+          once post-quantum signatures are enforced, a single {pqcAlgo} signature needs roughly {fmtBytes(pqcMin)} of
+          headroom, but max tx size is {fmtBytes(config.maxTxBytes)}. Raise it to at least {fmtBytes(pqcMin)}.
         </Warn>
       )}
       {txExceedsBlock && (
@@ -978,15 +1192,15 @@ function StepAccounts({
     <div>
       <h2 className="text-lg font-semibold text-white mb-1">Genesis Accounts</h2>
       <p className="text-sm text-ink-300 mb-4">
-        Who holds what at block 0. The engine cannot produce a genesis block without at least one funded account.
-        Balances are in the base denom ({basics.tokenDenom || 'denom'}).
+        Who holds what at block 0. Balances are in the base denom ({basics.tokenDenom || 'denom'}).
+        Each validator account runs one node when you launch.
       </p>
 
       {validatorCount < consensus.validatorSetSize && (
         <Warn>
           <span className="text-warn-300 font-medium">Validator shortfall: </span>
           Consensus expects {consensus.validatorSetSize} validators but only {validatorCount} validator account{validatorCount === 1 ? '' : 's'} defined.
-          The chain can still start with fewer, but the set size in the Consensus step won't be reached at genesis.
+          The chain will run with {validatorCount}. Fewer than 4 validators means it cannot survive one failing.
         </Warn>
       )}
       {overAllocated && (
@@ -1015,7 +1229,7 @@ function StepAccounts({
               <div className="col-span-4">
                 <label className="label">Address</label>
                 <input type="text" value={a.address} onChange={(e) => patch(a.id, { address: e.target.value })}
-                  className="input-mono" placeholder={`${prefix}1...`} />
+                  className="input-mono" placeholder="blank = generate" />
               </div>
               <div className="col-span-2">
                 <label className="label">Balance</label>
@@ -1053,20 +1267,24 @@ function StepAccounts({
       </div>
 
       <p className="text-xs text-ink-400 mt-3">
-        Validator addresses here are their <em>account</em> addresses (where staking rewards land). Validator consensus keys
-        are generated separately by the engine at first boot and are not part of this step.
+        Keys are generated on this machine by the Chain Forge service when you launch, one per account.
+        Leave an address blank and it's derived from the new key ({prefix}1…); type one and the new key is bound to it.
+        Private keys stay in the chain's folder on this machine and are never sent to this page or the dashboard.
       </p>
     </div>
   );
 }
 
-// --- Step: Review & Generate ---
+// --- Step: Review & Launch ---
 function StepGenerate({
-  genesisJson, config, saving, saveError, generated, generateStatus, onGenerate,
+  genesisJson, config, problems, saving, saveError, generated, launched, onLaunch, onSaveDraft,
 }: {
-  genesisJson: Record<string, unknown>; config: ChainConfig; saving: boolean; saveError: string | null;
-  generated: Chain | null; generateStatus: 'ready' | 'coming-soon'; onGenerate: () => void;
+  genesisJson: Record<string, unknown>; config: ChainConfig; problems: string[]; saving: boolean;
+  saveError: string | null; generated: Chain | null; launched: LocalChain | null;
+  onLaunch: () => void; onSaveDraft: () => void;
 }) {
+  if (launched) return <LaunchedChain initial={launched} />;
+
   if (generated) {
     return (
       <div>
@@ -1075,16 +1293,11 @@ function StepGenerate({
             <Check size={24} className="text-success-400" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-white">Chain Configuration Saved</h2>
-            <p className="text-sm text-ink-300">Your chain "{config.basics.chainName}" has been saved to the dashboard.</p>
+            <h2 className="text-lg font-semibold text-white">Draft Saved</h2>
+            <p className="text-sm text-ink-300">"{config.basics.chainName}" is saved to the dashboard. It isn't running.</p>
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-3 mb-6">
-          <div className="card p-4"><p className="text-xs text-ink-400 mb-1">Chain ID</p><p className="text-sm font-mono text-white">{config.basics.chainId}</p></div>
-          <div className="card p-4"><p className="text-xs text-ink-400 mb-1">Token</p><p className="text-sm font-mono text-white">{config.basics.tokenSymbol}</p></div>
-          <div className="card p-4"><p className="text-xs text-ink-400 mb-1">Accounts</p><p className="text-sm font-mono text-white">{config.genesisAccounts.accounts.length} at genesis</p></div>
-        </div>
-        <label className="label">Genesis JSON Preview</label>
+        <label className="label">Genesis JSON</label>
         <JsonViewer data={genesisJson} />
       </div>
     );
@@ -1097,8 +1310,19 @@ function StepGenerate({
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-white mb-1">Review & Generate</h2>
-      <p className="text-sm text-ink-300 mb-6">Review your configuration and generate the genesis file.</p>
+      <h2 className="text-lg font-semibold text-white mb-1">Review & Launch</h2>
+      <p className="text-sm text-ink-300 mb-6">
+        Launch runs your chain on this machine: one node per validator, keys generated locally.
+      </p>
+
+      {problems.length > 0 && (
+        <div className="mb-6 p-3 rounded-lg border border-danger-500/30 bg-danger-500/5">
+          <p className="text-sm text-danger-400 font-medium mb-1">Fix these before launching</p>
+          <ul className="text-xs text-ink-300 list-disc pl-5 space-y-0.5">
+            {problems.map((p) => <li key={p}>{p}</li>)}
+          </ul>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3 mb-6">
         <div className="card p-4">
@@ -1118,10 +1342,10 @@ function StepGenerate({
           <p className="text-xs text-ink-400 uppercase tracking-wider mb-2">Consensus & Execution</p>
           <div className="space-y-1 text-sm">
             <Row k="Mechanism" v={config.consensus.mechanism.toUpperCase()} />
+            <Row k="Personhood" v={config.consensus.personhoodWeighted ? 'weighted' : 'off'} />
             <Row k="Validators" v={config.consensus.validatorSetSize} />
             <Row k="Block Time" v={`${config.consensus.blockTimeMs}ms`} />
-            <Row k="State Model" v={config.execution.stateModel} />
-            <Row k="Parallel" v={config.execution.parallelExecution ? 'Yes' : 'No'} />
+            <Row k="Signatures" v={config.execution.requireSignatures ? 'required' : 'OFF'} />
             <Row k="Gas Model" v={config.execution.gasModel} />
           </div>
         </div>
@@ -1131,7 +1355,6 @@ function StepGenerate({
           <div className="space-y-1 text-sm">
             <Row k="Scheme" v={crypto.signatureScheme} />
             {crypto.pqcAlgorithm && <Row k="PQC Algo" v={crypto.pqcAlgorithm} />}
-            <Row k="Validator Keys" v={crypto.validatorScheme} />
             <Row k="Hash Width" v={`${crypto.hashWidth}-bit`} />
             <Row k="Migration" v={crypto.migrationTrigger} />
           </div>
@@ -1141,7 +1364,6 @@ function StepGenerate({
           <p className="text-xs text-ink-400 uppercase tracking-wider mb-2">Network & Limits</p>
           <div className="space-y-1 text-sm">
             <Row k="Network ID" v={config.network.networkId} />
-            <Row k="P2P / RPC" v={`${config.network.p2pPort} / ${config.network.rpcPort}`} />
             <Row k="Discovery" v={config.network.peerDiscovery} />
             <Row k="Max Peers" v={config.network.maxPeers} />
             <Row k="Block / Tx" v={`${(config.limits.maxBlockBytes / 1024).toFixed(0)}K / ${(config.limits.maxTxBytes / 1024).toFixed(0)}K`} />
@@ -1159,6 +1381,7 @@ function StepGenerate({
             <div key={a.id} className="flex justify-between gap-3">
               <span className="text-ink-400 truncate">
                 <span className="badge badge-draft font-mono mr-2">{a.role}</span>{a.label || '(unlabeled)'}
+                <span className="font-mono text-ink-500 ml-2">{a.address || '(generated)'}</span>
               </span>
               <span className="text-white font-mono shrink-0">{Number(a.balance).toLocaleString()}</span>
             </div>
@@ -1167,16 +1390,10 @@ function StepGenerate({
       </div>
 
       <div className="card p-4 mb-6">
-        <p className="text-xs text-ink-400 uppercase tracking-wider mb-2">Selected Modules ({config.modules.selected.length})</p>
+        <p className="text-xs text-ink-400 uppercase tracking-wider mb-2">Modules</p>
         <div className="flex flex-wrap gap-2">
-          {config.modules.selected.map((m) => <span key={m} className="badge badge-draft font-mono">{m}</span>)}
+          {(genesisJson.modules as string[]).map((m) => <span key={m} className="badge badge-draft font-mono">{m}</span>)}
         </div>
-        {config.modules.customModule.trim() && (
-          <div className="mt-3 pt-3 border-t border-ink-700/50">
-            <p className="text-xs text-ink-400 mb-1">Custom Modules</p>
-            <p className="text-xs font-mono text-ink-200 whitespace-pre-line">{config.modules.customModule}</p>
-          </div>
-        )}
       </div>
 
       <label className="label">Genesis JSON Preview</label>
@@ -1186,25 +1403,106 @@ function StepGenerate({
         <div className="text-sm text-danger-400 bg-danger-500/10 border border-danger-500/30 rounded-lg px-3 py-2 mb-4">{saveError}</div>
       )}
 
-      {generateStatus === 'coming-soon' && (
-        <div className="card p-4 mb-4 border-warn-500/20">
-          <div className="flex items-start gap-3">
-            <AlertCircle size={18} className="text-warn-400 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm text-ink-200 font-medium">Build API not yet live</p>
-              <p className="text-xs text-ink-400 mt-1">
-                "Generate Genesis" saves your configuration to the dashboard. The Rust engine's build endpoint is
-                still being wired up — once online, your saved chain can be compiled without re-entering anything.
-              </p>
-            </div>
+      <div className="flex gap-3">
+        <button onClick={onLaunch} disabled={saving || problems.length > 0}
+          className="btn-primary flex-1 flex items-center justify-center gap-2">
+          {saving ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+          {saving ? 'Working...' : 'Launch Local Chain'}
+        </button>
+        <button onClick={onSaveDraft} disabled={saving}
+          className="btn-secondary flex items-center justify-center gap-2">
+          <Save size={16} />
+          Save Draft Only
+        </button>
+      </div>
+      <p className="text-xs text-ink-400 mt-2">
+        Launching needs the Chain Forge service running on this machine ({SERVICE_URL}).
+      </p>
+    </div>
+  );
+}
+
+/** A launched local chain: live status from each node, refreshed every 2 seconds. */
+function LaunchedChain({ initial }: { initial: LocalChain }) {
+  const [chain, setChain] = useState<LocalChain>(initial);
+  const [stopped, setStopped] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (stopped) return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`${SERVICE_URL}/api/chains/${encodeURIComponent(initial.chain_id)}`);
+        if (res.ok) { setChain(await res.json()); setError(null); }
+        else if (res.status === 404) { setStopped(true); }
+      } catch {
+        setError('Lost contact with the Chain Forge service.');
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [initial.chain_id, stopped]);
+
+  const stop = async () => {
+    try {
+      await fetch(`${SERVICE_URL}/api/chains/${encodeURIComponent(initial.chain_id)}/stop`, { method: 'POST' });
+      setStopped(true);
+    } catch {
+      setError('Could not reach the Chain Forge service to stop the chain.');
+    }
+  };
+
+  const allUp = chain.nodes.length > 0 && chain.nodes.every((n) => n.status.running && (n.status.height ?? 0) > 0);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className={`w-12 h-12 rounded-xl border flex items-center justify-center ${
+            stopped ? 'bg-ink-800 border-ink-600' : 'bg-success-500/10 border-success-500/20'}`}>
+            {stopped ? <Square size={22} className="text-ink-400" /> : <Play size={22} className="text-success-400" />}
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-white">
+              {stopped ? 'Chain Stopped' : allUp ? 'Chain Running' : 'Starting Nodes...'}
+            </h2>
+            <p className="text-sm text-ink-300 font-mono">{chain.chain_id}</p>
           </div>
         </div>
-      )}
+        {!stopped && (
+          <button onClick={stop} className="btn-secondary flex items-center gap-2">
+            <Square size={14} /> Stop Chain
+          </button>
+        )}
+      </div>
 
-      <button onClick={onGenerate} disabled={saving} className="btn-primary w-full flex items-center justify-center gap-2">
-        {saving ? <Loader2 size={16} className="animate-spin" /> : <FileJson size={16} />}
-        {saving ? 'Saving Configuration...' : 'Generate Genesis'}
-      </button>
+      {error && <Warn>{error}</Warn>}
+
+      <div className="card p-4 mb-4">
+        <div className="grid grid-cols-12 text-xs text-ink-400 uppercase tracking-wider mb-2">
+          <span className="col-span-5">Validator</span>
+          <span className="col-span-2">State</span>
+          <span className="col-span-2 text-right">Height</span>
+          <span className="col-span-1 text-right">Peers</span>
+          <span className="col-span-2 text-right">API</span>
+        </div>
+        {chain.nodes.map((n) => (
+          <div key={n.validator} className="grid grid-cols-12 text-sm py-1 border-t border-ink-700/50">
+            <span className="col-span-5 font-mono text-white truncate">{n.validator}</span>
+            <span className={`col-span-2 ${n.status.running ? 'text-success-400' : 'text-danger-400'}`}>
+              {stopped ? 'stopped' : !n.status.running ? `exited (${n.status.exit_code ?? '?'})` : n.status.api === 'starting' ? 'starting' : 'running'}
+            </span>
+            <span className="col-span-2 text-right font-mono text-white">{n.status.height ?? '—'}</span>
+            <span className="col-span-1 text-right font-mono text-white">{n.status.peer_count ?? '—'}</span>
+            <a href={`${n.api_url}/api/status`} target="_blank" rel="noreferrer"
+              className="col-span-2 text-right text-forge-400 hover:underline font-mono text-xs">status</a>
+          </div>
+        ))}
+      </div>
+
+      <p className="text-xs text-ink-400">
+        Files (genesis, logs, and private keys) are in <span className="font-mono">{chain.dir}</span>.
+        State is in memory: stopping the chain discards it, and the next launch starts from genesis.
+      </p>
     </div>
   );
 }
