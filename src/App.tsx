@@ -4,9 +4,11 @@ import { Dashboard } from '@/pages/Dashboard';
 import { Wizard } from '@/pages/Wizard';
 import { ChainDetail } from '@/pages/ChainDetail';
 import { EngineStatus } from '@/pages/EngineStatus';
+import { Explorer } from '@/pages/Explorer';
+import { TxBuilder } from '@/pages/TxBuilder';
 import type { Chain } from '@/types';
 
-type Page = 'dashboard' | 'wizard' | 'detail' | 'engine';
+type Page = 'dashboard' | 'wizard' | 'detail' | 'engine' | 'explorer' | 'tx';
 
 export default function App() {
   const [page, setPage] = useState<Page>('dashboard');
@@ -42,7 +44,9 @@ export default function App() {
           onBack={() => setPage('dashboard')}
         />
       )}
-      {page === 'engine' && <EngineStatus />}
+      {page === 'engine'    && <EngineStatus />}
+      {page === 'explorer'  && <Explorer />}
+      {page === 'tx'        && <TxBuilder />}
     </Layout>
   );
 }

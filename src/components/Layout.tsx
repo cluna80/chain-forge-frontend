@@ -1,8 +1,8 @@
 import { type ReactNode } from 'react';
 import { Logo } from '@/components/Logo';
-import { LayoutDashboard, Plus, Activity } from 'lucide-react';
+import { LayoutDashboard, Plus, Activity, Search, Send } from 'lucide-react';
 
-type Page = 'dashboard' | 'wizard' | 'detail' | 'engine';
+type Page = 'dashboard' | 'wizard' | 'detail' | 'engine' | 'explorer' | 'tx';
 
 interface LayoutProps {
   current: Page;
@@ -11,9 +11,11 @@ interface LayoutProps {
 }
 
 const NAV_ITEMS: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
-  { id: 'dashboard', label: 'My Chains', icon: LayoutDashboard },
-  { id: 'wizard', label: 'New Chain', icon: Plus },
-  { id: 'engine', label: 'Engine Status', icon: Activity },
+  { id: 'dashboard', label: 'My Chains',     icon: LayoutDashboard },
+  { id: 'wizard',    label: 'New Chain',      icon: Plus },
+  { id: 'explorer',  label: 'Explorer',       icon: Search },
+  { id: 'tx',        label: 'Tx Builder',     icon: Send },
+  { id: 'engine',    label: 'Engine Status',  icon: Activity },
 ];
 
 export function Layout({ current, onNavigate, children }: LayoutProps) {
