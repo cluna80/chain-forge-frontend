@@ -102,38 +102,66 @@ export function fetchIdentity(base: string, address: string) {
 }
 
 // ── Tx Builder endpoint ─────────────────────────────────────────────────────
+//
+// The node's POST /api/tx expects a fully-formed Transaction struct:
+//   { id, sender, nonce, body, gas_limit, signature?, public_key? }
+//
+// Numeric fields (amount, units, etc.) must be JSON numbers, not strings.
+// The node runs in no-signature mode for devnet (require_signatures: false),
+// so signature and public_key can be omitted.
 
-export interface TxRequest {
-  from: string;
-  key_path: string;   // path to the signing key on the node's local FS
+export type TxBody =
+  | { Transfer:             { to: string; denom: string; amount: number } }
+  | { Burn:                 { denom: string; amount: number } }
+  | { Stake:                { validator: string; amount: number } }
+  | { QrcPurchase:          { qcb_amount: number; min_qrc_out: number } }
+  | { QrcSpend:             { resource: string; units: number; amount: number } }
+  | { RegisterIdentity:     Record<string, never> }
+  | { Attest:               { claimant_id: string } }
+  | { RevokeAttestation:    { attested_id: string } }
+  | { ReportSuspectedSybil: { suspected_id: string } }
+  | { ConfirmSybil:         { sybil_id: string } }
+  | { ReverseSybil:         { sybil_id: string } }
+  | { SponsorAgent:         { agent_address: string } }
+  | { RevokeAgent:          { agent_address: string } }
+  | { RevokeAgentFull:      { agent_id: string } }
+  | { AuthorizeAgent:       { agent_id: string } }
+  | { SuspendAgent:         { agent_id: string; reason: string } }
+  | { Custom:               { module: string; payload: string } };
+
+/** Full Transaction struct as expected by POST /api/tx */
+export interface Transaction {
+  id: string;
+  sender: string;
+  nonce: number;
   body: TxBody;
+  gas_limit: number;
+  signature?: number[];
+  public_key?: number[];
 }
 
 export interface TxResponse {
-  tx_hash: string;
+  /** "queued" on success */
   status: string;
-  height?: number;
+  tx_id: string;
 }
 
-export type TxBody =
-  | { Transfer:          { to: string; denom: string; amount: string } }
-  | { Burn:              { denom: string; amount: string } }
-  | { Stake:             { validator: string; amount: string } }
-  | { QrcPurchase:       { qcb_amount: string; min_qrc_out: string } }
-  | { QrcSpend:          { resource: string; units: string; amount: string } }
-  | { RegisterIdentity:  Record<string, never> }
-  | { Attest:            { claimant_id: string } }
-  | { RevokeAttestation: { attested_id: string } }
-  | { ReportSuspectedSybil: { suspected_id: string } }
-  | { ConfirmSybil:      { sybil_id: string } }
-  | { ReverseSybil:      { sybil_id: string } }
-  | { SponsorAgent:      { agent_address: string } }
-  | { RevokeAgent:       { agent_address: string } }
-  | { RevokeAgentFull:   { agent_id: string } }
-  | { AuthorizeAgent:    { agent_id: string } }
-  | { SuspendAgent:      { agent_id: string; reason: string } }
-  | { Custom:            { module: string; payload: string } };
+/** Monotonically increasing counter used to generate unique tx IDs client-side. */
+let _txSeq = 0;
 
-export function submitTx(base: string, req: TxRequest) {
-  return post<TxResponse>(base, '/api/tx', req);
+/**
+ * Build and submit a transaction.
+ * Generates a deterministic-enough ID from sender + nonce + timestamp.
+ * The node re-hashes the tx itself; this ID is just used for correlation.
+ */
+export function submitTx(
+  base: string,
+  sender: string,
+  nonce: number,
+  body: TxBody,
+  gasLimit = 200_000,
+) {
+  const id = `tx-${sender}-${nonce}-${Date.now()}-${++_txSeq}`;
+  const tx: Transaction = { id, sender, nonce, body, gas_limit: gasLimit };
+  return post<TxResponse>(base, '/api/tx', tx);
 }

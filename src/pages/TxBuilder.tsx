@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import {
-  Send, ChevronDown, AlertCircle, CheckCircle2, Loader2,
+  Send, AlertCircle, CheckCircle2, Loader2,
 } from 'lucide-react';
 import { DEFAULT_NODE_URL, submitTx, type TxBody } from '@/lib/nodeApi';
 
 // ── Tx variant definitions ──────────────────────────────────────────────────
 
-type FieldDef = { name: string; label: string; placeholder?: string; mono?: boolean };
+type FieldDef = { name: string; label: string; placeholder?: string; mono?: boolean; numeric?: boolean };
 
 interface VariantDef {
   key: string;
@@ -22,17 +22,17 @@ const VARIANTS: VariantDef[] = [
     key: 'Transfer', label: 'Transfer', category: 'Token',
     description: 'Send tokens from your account to another address.',
     fields: [
-      { name: 'to',     label: 'To Address',  placeholder: 'qforge1…', mono: true },
-      { name: 'denom',  label: 'Denom',        placeholder: 'qcb' },
-      { name: 'amount', label: 'Amount',        placeholder: '1000000' },
+      { name: 'to',     label: 'To Address',  placeholder: 'qcb1…', mono: true },
+      { name: 'denom',  label: 'Denom',        placeholder: 'uqcb' },
+      { name: 'amount', label: 'Amount (uqcb)', placeholder: '1000000', numeric: true },
     ],
   },
   {
     key: 'Burn', label: 'Burn', category: 'Token',
     description: 'Permanently burn tokens, reducing the supply.',
     fields: [
-      { name: 'denom',  label: 'Denom',  placeholder: 'qcb' },
-      { name: 'amount', label: 'Amount', placeholder: '1000000' },
+      { name: 'denom',  label: 'Denom',        placeholder: 'uqcb' },
+      { name: 'amount', label: 'Amount (uqcb)', placeholder: '1000000', numeric: true },
     ],
   },
   // Staking
@@ -40,8 +40,8 @@ const VARIANTS: VariantDef[] = [
     key: 'Stake', label: 'Stake', category: 'Staking',
     description: 'Delegate QCB to a validator.',
     fields: [
-      { name: 'validator', label: 'Validator Address', placeholder: 'qforge1…', mono: true },
-      { name: 'amount',    label: 'Amount',             placeholder: '1000000' },
+      { name: 'validator', label: 'Validator Address', placeholder: 'qcb1…', mono: true },
+      { name: 'amount',    label: 'Amount (uqcb)',      placeholder: '1000000', numeric: true },
     ],
   },
   // QRC
@@ -49,17 +49,17 @@ const VARIANTS: VariantDef[] = [
     key: 'QrcPurchase', label: 'QRC Purchase', category: 'QRC',
     description: 'Buy QRC by spending QCB through the AMM pool.',
     fields: [
-      { name: 'qcb_amount',  label: 'QCB In',      placeholder: '1000000' },
-      { name: 'min_qrc_out', label: 'Min QRC Out', placeholder: '0' },
+      { name: 'qcb_amount',  label: 'QCB In (uqcb)',  placeholder: '1000000', numeric: true },
+      { name: 'min_qrc_out', label: 'Min QRC Out',     placeholder: '0', numeric: true },
     ],
   },
   {
     key: 'QrcSpend', label: 'QRC Spend', category: 'QRC',
     description: 'Consume QRC to access a compute resource.',
     fields: [
-      { name: 'resource', label: 'Resource', placeholder: 'compute' },
-      { name: 'units',    label: 'Units',    placeholder: '1' },
-      { name: 'amount',   label: 'QRC Amount', placeholder: '100' },
+      { name: 'resource', label: 'Resource',   placeholder: 'compute' },
+      { name: 'units',    label: 'Units',       placeholder: '1', numeric: true },
+      { name: 'amount',   label: 'QRC Amount',  placeholder: '100', numeric: true },
     ],
   },
   // Identity
@@ -159,11 +159,11 @@ export function TxBuilder() {
   const [nodeUrl, setNodeUrl] = useState(DEFAULT_NODE_URL);
   const [draftUrl, setDraftUrl] = useState(DEFAULT_NODE_URL);
   const [fromAddr, setFromAddr] = useState('');
-  const [keyPath, setKeyPath] = useState('keys/alice.key.json');
+  const [nonce, setNonce] = useState('0');
   const [variantKey, setVariantKey] = useState('Transfer');
   const [fields, setFields] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<{ ok: true; hash: string; status: string; height?: number } | { ok: false; error: string } | null>(null);
+  const [result, setResult] = useState<{ ok: true; txId: string; status: string } | { ok: false; error: string } | null>(null);
 
   const variant = VARIANTS.find((v) => v.key === variantKey)!;
 
@@ -174,9 +174,10 @@ export function TxBuilder() {
     if (variant.fields.length === 0) {
       return { [variant.key]: {} } as TxBody;
     }
-    const payload: Record<string, string> = {};
+    const payload: Record<string, string | number> = {};
     for (const f of variant.fields) {
-      payload[f.name] = fields[f.name] ?? '';
+      const raw = fields[f.name] ?? '';
+      payload[f.name] = f.numeric ? (Number(raw) || 0) : raw;
     }
     return { [variant.key]: payload } as TxBody;
   };
@@ -186,12 +187,8 @@ export function TxBuilder() {
     setResult(null);
     setSubmitting(true);
     try {
-      const res = await submitTx(nodeUrl, {
-        from: fromAddr,
-        key_path: keyPath,
-        body: buildBody(),
-      });
-      setResult({ ok: true, hash: res.tx_hash, status: res.status, height: res.height });
+      const res = await submitTx(nodeUrl, fromAddr, Number(nonce) || 0, buildBody());
+      setResult({ ok: true, txId: res.tx_id, status: res.status });
     } catch (err) {
       setResult({ ok: false, error: (err as Error).message });
     } finally {
@@ -217,39 +214,39 @@ export function TxBuilder() {
         {/* Node + signer */}
         <div className="card p-5 space-y-4">
           <h2 className="text-xs font-semibold text-ink-300 uppercase tracking-wider">Connection & Signer</h2>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Node RPC URL</label>
-              <div className="flex gap-2">
-                <input
-                  className="input-mono flex-1 text-xs"
-                  value={draftUrl}
-                  onChange={(e) => setDraftUrl(e.target.value)}
-                  onBlur={() => setNodeUrl(draftUrl)}
-                  placeholder="http://localhost:8080"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="label">Key File Path</label>
-              <input
-                className="input-mono text-xs"
-                value={keyPath}
-                onChange={(e) => setKeyPath(e.target.value)}
-                placeholder="keys/alice.key.json"
-              />
-              <p className="text-[11px] text-ink-500 mt-1">Resolved on the node's filesystem</p>
-            </div>
-          </div>
           <div>
-            <label className="label">From Address</label>
+            <label className="label">Node RPC URL</label>
             <input
               className="input-mono text-xs"
-              value={fromAddr}
-              onChange={(e) => setFromAddr(e.target.value)}
-              placeholder="qforge1…"
-              required
+              value={draftUrl}
+              onChange={(e) => setDraftUrl(e.target.value)}
+              onBlur={() => setNodeUrl(draftUrl)}
+              placeholder="http://localhost:8080"
             />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Sender Address</label>
+              <input
+                className="input-mono text-xs"
+                value={fromAddr}
+                onChange={(e) => setFromAddr(e.target.value)}
+                placeholder="qcb1alice"
+                required
+              />
+            </div>
+            <div>
+              <label className="label">Nonce</label>
+              <input
+                className="input-mono text-xs"
+                value={nonce}
+                onChange={(e) => setNonce(e.target.value)}
+                placeholder="0"
+                type="number"
+                min="0"
+              />
+              <p className="text-[11px] text-ink-500 mt-1">Check /api/accounts/&lt;addr&gt; for current nonce</p>
+            </div>
           </div>
         </div>
 
@@ -313,9 +310,11 @@ export function TxBuilder() {
           <pre className="json-viewer text-[11px] max-h-[180px]">
             {JSON.stringify(
               {
-                from: fromAddr || '<from>',
-                key_path: keyPath,
+                id: `tx-${fromAddr || '<sender>'}-${nonce}-…`,
+                sender: fromAddr || '<sender>',
+                nonce: Number(nonce) || 0,
                 body: buildBody(),
+                gas_limit: 200000,
               },
               null,
               2,
@@ -329,12 +328,9 @@ export function TxBuilder() {
             <div className="flex items-start gap-3 p-4 rounded-lg bg-success-500/10 border border-success-500/30">
               <CheckCircle2 size={16} className="text-success-400 shrink-0 mt-0.5" />
               <div className="space-y-1 text-sm">
-                <p className="text-success-400 font-medium">Transaction submitted</p>
-                <p className="font-mono text-xs text-ink-300 break-all">{result.hash}</p>
-                <p className="text-xs text-ink-400">
-                  Status: {result.status}
-                  {result.height != null && ` · height ${result.height}`}
-                </p>
+                <p className="text-success-400 font-medium">Transaction queued</p>
+                <p className="font-mono text-xs text-ink-300 break-all">{result.txId}</p>
+                <p className="text-xs text-ink-400">Status: {result.status}</p>
               </div>
             </div>
           ) : (
