@@ -33,7 +33,7 @@ const RESEARCH_TRACKS = [
   {
     label: 'Open Research Reserve',
     description:
-      'A flex track for breakthrough research that doesn't fit the other categories. The QCB governance committee reviews and categorizes accepted submissions.',
+      "A flex track for breakthrough research that doesn't fit the other categories. The QCB governance committee reviews and categorizes accepted submissions.",
   },
 ];
 
