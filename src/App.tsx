@@ -6,9 +6,14 @@ import { ChainDetail } from '@/pages/ChainDetail';
 import { EngineStatus } from '@/pages/EngineStatus';
 import { Explorer } from '@/pages/Explorer';
 import { TxBuilder } from '@/pages/TxBuilder';
+import { Machines } from '@/pages/Machines';
+import { ResourceJobs } from '@/pages/ResourceJobs';
+import { Contribution } from '@/pages/Contribution';
+import { GrandChallenge } from '@/pages/GrandChallenge';
+import { Enterprise } from '@/pages/Enterprise';
 import type { Chain } from '@/types';
 
-type Page = 'dashboard' | 'wizard' | 'detail' | 'engine' | 'explorer' | 'tx';
+type Page = 'dashboard' | 'wizard' | 'detail' | 'engine' | 'explorer' | 'tx' | 'machines' | 'jobs' | 'contribution' | 'challenge' | 'enterprise';
 
 export default function App() {
   const [page, setPage] = useState<Page>('dashboard');
@@ -44,9 +49,14 @@ export default function App() {
           onBack={() => setPage('dashboard')}
         />
       )}
-      {page === 'engine'    && <EngineStatus />}
-      {page === 'explorer'  && <Explorer />}
-      {page === 'tx'        && <TxBuilder />}
+      {page === 'engine'       && <EngineStatus />}
+      {page === 'explorer'     && <Explorer />}
+      {page === 'tx'           && <TxBuilder />}
+      {page === 'machines'     && <Machines />}
+      {page === 'jobs'         && <ResourceJobs />}
+      {page === 'contribution' && <Contribution />}
+      {page === 'challenge'    && <GrandChallenge />}
+      {page === 'enterprise'   && <Enterprise />}
     </Layout>
   );
 }
