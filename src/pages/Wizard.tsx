@@ -328,6 +328,7 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
     status: Chain['status'], genesis: Record<string, unknown>, logs: string,
     nodeStatus: Record<string, unknown> | null,
   ): Promise<boolean> => {
+    if (!supabase) return false;
     const { data, error } = await supabase
       .from('chains')
       .insert({

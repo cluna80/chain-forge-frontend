@@ -59,6 +59,7 @@ export function ChainDetail({ chainId, onBack }: ChainDetailProps) {
 
   const loadChain = async () => {
     setLoading(true);
+    if (!supabase) { setError('Supabase not configured.'); setLoading(false); return; }
     const { data, error } = await supabase
       .from('chains')
       .select('*')
@@ -76,7 +77,7 @@ export function ChainDetail({ chainId, onBack }: ChainDetailProps) {
 
   const handleDelete = async () => {
     setDeleting(true);
-    await supabase.from('chains').delete().eq('id', chainId);
+    if (supabase) await supabase.from('chains').delete().eq('id', chainId);
     setDeleting(false);
     onBack();
   };

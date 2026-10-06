@@ -20,6 +20,11 @@ export function Dashboard({ onNewChain, onOpenChain }: DashboardProps) {
 
   const loadChains = async () => {
     setLoading(true);
+    if (!supabase) {
+      setError('Supabase not configured — chain storage unavailable.');
+      setLoading(false);
+      return;
+    }
     const { data, error } = await supabase
       .from('chains')
       .select('*')
