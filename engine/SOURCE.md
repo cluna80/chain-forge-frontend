@@ -22,6 +22,20 @@ Verify a crate is unchanged: `diff -r engine/chain-forge-core <source>/chain-for
 tokio must stay >= 1.54.1 (1.54.0 has a timer use-after-free; see the source repo's
 NODE-TOKIO-1).
 
+Batch 3 (copied from the same source commit): chain-forge-identity, chain-forge-validators, chain-forge-slashing,
+chain-forge-governance, chain-forge-personhood. Deviation: `chain-forge-validators/Cargo.toml` no longer lists
+`chain-forge-tokenomics` (declared in the source but never imported by its code; only two comments mention it), so
+the validators/slashing/governance group does not pull in the QRC-shaped tokenomics crate. No Rust source line changed.
+`state`, `execution`, `node`, `tokenomics` and `agents` are not included yet.
+
+QRC (retired by owner decision 2026-11-04) is STRIPPED from this batch's copy (owner decision: Chain Forge carries no retired
+code; the original repo keeps its version until the planned QRC cleanup). Edits, all outside any signed/persisted Chain Forge
+data: `chain-forge-governance`: the `ProposalKind::QrcParameter` variant and its display name removed, the doc header and
+`Cargo.toml` comment reworded, the test helper `qrc_proposal` renamed `parameter_proposal` and now builds a `ChainParameter`
+proposal (same ordinary-governance semantics); `chain-forge-identity`: five comments / log strings reworded (no "QRC");
+`chain-forge-personhood`: one comment reworded. No other source line changed. Note: a serialized `QrcParameter` proposal from
+Qattice would not deserialize in this copy; Chain Forge has no such data.
+
 ## Deliberate deviations from an unchanged copy (Batch 1)
 - `chain-forge-core/src/lib.rs` (one test, line ~1565): `pilot_devnet_genesis_is_authorized_only_on_feature_builds`
   read Qattice's `genesis-4node.json` from the source repository root. Qattice's genesis stays with Qattice
