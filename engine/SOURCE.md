@@ -46,3 +46,11 @@ Qattice would not deserialize in this copy; Chain Forge has no such data.
 ## Known Qattice coupling left in Batch 1
 - `chain-forge-crypto/src/bin/gen_devnet_keys.rs` writes devnet keys relative to the repository root (Qattice devnet
   tooling). Candidate to stay in Qattice; kept for now so the rest of the crate is an unchanged copy.
+
+## QRC removed from earlier batches (owner decision 2026-11-04: QRC retired; Chain Forge carries no retired code)
+Applied to this copy only; the original repo keeps its version until the planned QRC cleanup.
+- `chain-forge-core`: the `qrc` and `market` modules removed from `KNOWN_MODULES`, `EnabledModules` (fields, `all()`), the
+  `enabled_modules()` parser and its identity-dependency checks. A genesis that names `qrc` or `market` is now refused as an unknown
+  module (new test `retired_modules_are_unknown`; the tests that listed them were updated). Core test count unchanged (63).
+- `chain-forge-crypto`: two test message strings (`uqrc` -> `uex`); `chain-forge-vca-pq`: one doc-comment word.
+- `pocd` module: still present in core. PoCD is Qattice-only by owner decision; its removal from Chain Forge is a separate step.

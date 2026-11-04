@@ -1183,7 +1183,7 @@ mod tests {
     fn classical_sign_and_verify() {
         let scheme = ClassicalScheme;
         let kp     = scheme.generate_keypair("test-seed-alice").unwrap();
-        let msg    = b"transfer 1000 uqrc to bob";
+        let msg    = b"transfer 1000 uex to bob";
 
         let sig = scheme.sign(msg, &kp).unwrap();
         assert_eq!(sig.scheme, SchemeId::Classical);
@@ -1432,7 +1432,7 @@ mod tests {
         fn ed25519_signature_is_64_bytes() {
             let scheme = ClassicalScheme;
             let kp = scheme.generate_keypair("alice").unwrap();
-            let sig = scheme.sign(b"transfer 1000 uqrc", &kp).unwrap();
+            let sig = scheme.sign(b"transfer 1000 uex", &kp).unwrap();
             assert_eq!(sig.bytes.len(), 64, "Ed25519 signature is 64 bytes");
         }
 
