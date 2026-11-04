@@ -325,6 +325,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "chain-forge-consensus"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chain-forge-core",
+ "chain-forge-crypto",
+ "chain-forge-vca-pq",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "chain-forge-core"
 version = "0.1.0"
 dependencies = [
@@ -389,6 +404,19 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "chain-forge-vca-pq"
+version = "0.1.0"
+dependencies = [
+ "chain-forge-core",
+ "serde",
+ "serde_json",
+ "sha3",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

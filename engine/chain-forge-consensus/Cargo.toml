@@ -1,0 +1,22 @@
+[package]
+name    = "chain-forge-consensus"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+chain-forge-core   = { path = "../chain-forge-core" }
+chain-forge-crypto = { path = "../chain-forge-crypto", features = ["real-crypto"], optional = true }
+chain-forge-vca-pq = { path = "../chain-forge-vca-pq" }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
+async-trait = { workspace = true }
+tracing     = { workspace = true }
+
+[features]
+real-crypto = ["chain-forge-crypto", "chain-forge-crypto/real-pqc"]
+
+[dev-dependencies]
+tokio = { workspace = true }

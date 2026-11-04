@@ -8,6 +8,8 @@ members = [
     "chain-forge-p2p",
     "chain-forge-service",
     "chain-forge-keygen",
+    "chain-forge-vca-pq",
+    "chain-forge-consensus",
 ]
 
 [workspace.package]
