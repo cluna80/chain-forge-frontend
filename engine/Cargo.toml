@@ -10,6 +10,11 @@ members = [
     "chain-forge-keygen",
     "chain-forge-vca-pq",
     "chain-forge-consensus",
+    "chain-forge-identity",
+    "chain-forge-validators",
+    "chain-forge-slashing",
+    "chain-forge-governance",
+    "chain-forge-personhood",
 ]
 
 [workspace.package]
