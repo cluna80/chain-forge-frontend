@@ -1,0 +1,42 @@
+[package]
+name    = "chain-forge-p2p"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# P2P networking layer: peer discovery, gossip, block/vote propagation.
+# Uses libp2p — same foundation as Substrate, IPFS, Filecoin.
+# Feature flags kept minimal to control compile time.
+
+[dependencies]
+chain-forge-core = { path = "../chain-forge-core" }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+thiserror        = { workspace = true }
+tracing          = { workspace = true }
+tokio            = { workspace = true }
+async-trait      = { workspace = true }
+
+# libp2p — real P2P stack
+# Mock network (used in tests) compiles without libp2p features.
+# Real network (used in node binary) gates on the "real-network" feature.
+libp2p = { version = "0.54", optional = true, features = [
+    "tokio",
+    "tcp",
+    "noise",
+    "yamux",
+    "gossipsub",
+    "mdns",
+    "identify",
+    "ping",
+    "macros",
+] }
+
+[features]
+# Enable the real libp2p network backend.
+# Without this flag, only MockNetworkService is available (fast test compile).
+real-network = ["dep:libp2p"]
+
+[dev-dependencies]
+tokio = { workspace = true }
