@@ -470,9 +470,7 @@ pub const KNOWN_MODULES: &[(&str, &str)] = &[
     ("bank",     "accounts, transfers and burns (always on)"),
     ("staking",  "Stake transactions"),
     ("identity", "proof of personhood: RegisterIdentity and web-of-trust Attest"),
-    ("qrc",    "dormant legacy QRC-token purchase/spend/contribution/capacity paths -- not part of the active single-token ($QCB) protocol (requires identity)"),
     ("agents",   "sponsored agents (requires identity)"),
-    ("market",   "resource job/escrow marketplace (LockQrcForJob, CreateJob..VerifyJob, etc.) -- not part of the active single-token ($QCB) protocol (requires identity)"),
     ("pocd",     "Proof-of-Compute-Discovery / Grand Challenge research rewards (RegisterMachine, SubmitUsefulWork, ClaimResearchReward) -- active, uqcb-denominated (requires identity)"),
 ];
 
@@ -482,15 +480,7 @@ pub const KNOWN_MODULES: &[(&str, &str)] = &[
 pub struct EnabledModules {
     pub staking:  bool,
     pub identity: bool,
-    /// Legacy QRC-token ops (QrcPurchase, QrcSpend, QrcContributionSettle,
-    /// EpochOpen/EpochClose, RecordCapacity). Dormant in the single-token
-    /// ($QCB-only) protocol -- see market/pocd for the active split-out paths.
-    pub qrc:    bool,
     pub agents:   bool,
-    /// The resource job/escrow marketplace (LockQrcForJob, ReleaseQrcForJob,
-    /// RefundQrcForJob, CreateJob, AcceptJob, CompleteJob, VerifyJob,
-    /// PurchaseQrc, CreditProvider). Not part of the active QCB-only protocol.
-    pub market: bool,
     /// Proof-of-Compute-Discovery / Grand Challenge research-reward path
     /// (RegisterMachine, SubmitUsefulWork, ClaimResearchReward). Active,
     /// uqcb-denominated, and considered core to the protocol.
@@ -501,8 +491,7 @@ impl EnabledModules {
     /// Everything on -- every module this engine knows how to run.
     pub fn all() -> Self {
         Self {
-            staking: true, identity: true, qrc: true, agents: true,
-            market: true, pocd: true,
+            staking: true, identity: true, agents: true, pocd: true,
         }
     }
 }
@@ -784,9 +773,7 @@ impl GenesisConfig {
                 "bank"     => {}
                 "staking"  => m.staking = true,
                 "identity" => m.identity = true,
-                "qrc"    => m.qrc = true,
                 "agents"   => m.agents = true,
-                "market"   => m.market = true,
                 "pocd"     => m.pocd = true,
                 other => errors.push(format!(
                     "unknown module \"{other}\" (known modules: {})", known.join(", ")
@@ -797,12 +784,6 @@ impl GenesisConfig {
             errors.push(format!(
                 "custom module \"{name}\": Chain Forge does not support custom modules yet; remove it from custom_modules"
             ));
-        }
-        if m.qrc && !m.identity {
-            errors.push("module \"qrc\" requires \"identity\": legacy QRC-token ops are gated by verified identity".into());
-        }
-        if m.market && !m.identity {
-            errors.push("module \"market\" requires \"identity\": the resource marketplace gates jobs and settlement by verified identity".into());
         }
         if m.pocd && !m.identity {
             errors.push("module \"pocd\" requires \"identity\": ClaimResearchReward settlement operators are verified DIS identities".into());
@@ -1767,18 +1748,17 @@ mod tests {
 
     #[test]
     fn qcb_module_set_enables_everything() {
-        let m = with_modules(&["bank", "staking", "identity", "qrc", "agents", "market", "pocd"], &[]).enabled_modules().unwrap();
+        let m = with_modules(&["bank", "staking", "identity", "agents", "pocd"], &[]).enabled_modules().unwrap();
         assert_eq!(m, EnabledModules::all());
     }
 
     #[test]
-    fn single_token_module_set_excludes_market_and_qrc() {
-        // The active QCB-only protocol: identity, staking, agents, and PoCD
-        // research rewards, but not the legacy QRC-token paths or the
-        // resource job/escrow marketplace.
-        let m = with_modules(&["bank", "staking", "identity", "agents", "pocd"], &[]).enabled_modules().unwrap();
-        assert!(m.staking && m.identity && m.agents && m.pocd);
-        assert!(!m.qrc && !m.market);
+    fn retired_modules_are_unknown() {
+        // The retired token and marketplace modules no longer exist: a genesis naming them is refused.
+        for name in ["qrc", "market"] {
+            let e = with_modules(&["bank", "identity", name], &[]).enabled_modules().unwrap_err();
+            assert!(e.contains(&format!("unknown module \"{name}\"")), "{name}: {e}");
+        }
     }
 
     #[test]
@@ -1791,10 +1771,8 @@ mod tests {
 
     #[test]
     fn modules_that_need_identity_are_refused_without_it() {
-        let e = with_modules(&["bank", "qrc", "agents", "market", "pocd"], &[]).enabled_modules().unwrap_err();
-        assert!(e.contains("\"qrc\" requires \"identity\""));
+        let e = with_modules(&["bank", "agents", "pocd"], &[]).enabled_modules().unwrap_err();
         assert!(e.contains("\"agents\" requires \"identity\""));
-        assert!(e.contains("\"market\" requires \"identity\""));
         assert!(e.contains("\"pocd\" requires \"identity\""));
     }
 
@@ -1806,7 +1784,7 @@ mod tests {
         let e = cfg.enabled_modules().unwrap_err();
         assert!(e.contains("personhood_weighted requires"));
 
-        let mut qcb = with_modules(&["bank", "staking", "identity", "qrc", "agents", "market", "pocd"], &[]);
+        let mut qcb = with_modules(&["bank", "staking", "identity", "agents", "pocd"], &[]);
         qcb.consensus.personhood_weighted = true;
         assert!(qcb.enabled_modules().is_ok());
     }
