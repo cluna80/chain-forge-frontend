@@ -5,8 +5,14 @@ Copied from https://github.com/cluna80/chain-forge-engine at commit
 remains authoritative until the cutover; this directory is re-synced from it, and no
 feature work lands only here.
 
-Batch 1 (copied unchanged, no code edits): chain-forge-core, chain-forge-crypto,
+Batch 1 (copied unchanged except one test, see below): chain-forge-core, chain-forge-crypto,
 chain-forge-p2p, chain-forge-service, chain-forge-keygen.
+
+Batch 2 (copied unchanged, no code edits; same source commit): chain-forge-vca-pq,
+chain-forge-consensus. `state` and `identity` are deliberately NOT included yet: the
+account record in `state` carries DIS fields (key version, recovery policy, pending
+recovery), which stay in Qattice; they move later with an account-extension design that
+keeps Qattice's state roots byte-identical.
 
 Only the workspace manifest (`engine/Cargo.toml`) and `engine/Cargo.lock` (copied from the
 source, pruned by cargo to this workspace) are new. The legacy root `Cargo.toml` and
