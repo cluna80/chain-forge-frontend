@@ -207,6 +207,16 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
   const [generated, setGenerated] = useState<Chain | null>(null);
   const [launched, setLaunched] = useState<LocalChain | null>(null);
 
+  // When the Qattice devnet form opens, check whether that chain ID is already
+  // running in the service and show its status immediately if so.
+  useEffect(() => {
+    if (!qattice || launched) return;
+    fetch(`${SERVICE_URL}/api/chains/${encodeURIComponent(qatticeId.trim())}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (data) setLaunched(data as LocalChain); })
+      .catch(() => { /* service not running yet — stay on the create form */ });
+  }, [qattice]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /** Fill all wizard fields with QCB's production settings. */
   const applyQcbTemplate = () => {
     setConfig(prev => ({
@@ -407,6 +417,16 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
         body: JSON.stringify({ chain_id: qatticeId.trim() }),
       });
       const result = await response.json();
+      if (response.status === 409) {
+        // Chain is already running — fetch current status and show it.
+        const statusRes = await fetch(`${SERVICE_URL}/api/chains/${encodeURIComponent(qatticeId.trim())}`);
+        if (statusRes.ok) {
+          setLaunched((await statusRes.json()) as LocalChain);
+        } else {
+          setSaveError(result.error ?? 'Chain is already running — refresh the service status page.');
+        }
+        return;
+      }
       if (!response.ok) {
         setSaveError(result.error ?? `Launch failed (HTTP ${response.status}).`);
         return;
