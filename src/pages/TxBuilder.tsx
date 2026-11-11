@@ -44,24 +44,6 @@ const VARIANTS: VariantDef[] = [
       { name: 'amount',    label: 'Amount (uqcb)',      placeholder: '1000000', numeric: true },
     ],
   },
-  // QRC
-  {
-    key: 'QrcPurchase', label: 'QRC Purchase', category: 'QRC',
-    description: 'Buy QRC by spending QCB through the AMM pool.',
-    fields: [
-      { name: 'qcb_amount',  label: 'QCB In (uqcb)',  placeholder: '1000000', numeric: true },
-      { name: 'min_qrc_out', label: 'Min QRC Out',     placeholder: '0', numeric: true },
-    ],
-  },
-  {
-    key: 'QrcSpend', label: 'QRC Spend', category: 'QRC',
-    description: 'Consume QRC to access a compute resource.',
-    fields: [
-      { name: 'resource', label: 'Resource',   placeholder: 'compute' },
-      { name: 'units',    label: 'Units',       placeholder: '1', numeric: true },
-      { name: 'amount',   label: 'QRC Amount',  placeholder: '100', numeric: true },
-    ],
-  },
   // Identity
   {
     key: 'RegisterIdentity', label: 'Register Identity', category: 'Identity',

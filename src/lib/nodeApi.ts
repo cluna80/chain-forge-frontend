@@ -58,14 +58,6 @@ export interface ValidatorEntry {
   commission?: string;
 }
 
-export interface QrcMetrics {
-  total_supply: string;
-  circulating: string;
-  price_qcb?: string;
-  pool_qcb?: string;
-  pool_qrc?: string;
-}
-
 export interface IdentityTier {
   address: string;
   tier: string;
@@ -93,10 +85,6 @@ export function fetchValidators(base: string) {
   return get<ValidatorEntry[]>(base, '/api/validators');
 }
 
-export function fetchQrc(base: string) {
-  return get<QrcMetrics>(base, '/api/qrc');
-}
-
 export function fetchIdentity(base: string, address: string) {
   return get<IdentityTier>(base, `/api/identity/${address}`);
 }
@@ -114,8 +102,6 @@ export type TxBody =
   | { Transfer:             { to: string; denom: string; amount: number } }
   | { Burn:                 { denom: string; amount: number } }
   | { Stake:                { validator: string; amount: number } }
-  | { QrcPurchase:          { qcb_amount: number; min_qrc_out: number } }
-  | { QrcSpend:             { resource: string; units: number; amount: number } }
   | { RegisterIdentity:     Record<string, never> }
   | { Attest:               { claimant_id: string } }
   | { RevokeAttestation:    { attested_id: string } }
