@@ -1,16 +1,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import type { Chain } from '@/types';
+import type { Chain, LocalChain } from '@/types';
 import { StatusBadge } from '@/components/StatusBadge';
 import { JsonViewer } from '@/components/JsonViewer';
-import { ENGINE_VERSION } from '@/lib/engineData';
+import { ENGINE_VERSION, SERVICE_URL } from '@/lib/engineData';
 import {
   ArrowLeft, Boxes, Cpu, FileJson, Terminal,
   ExternalLink, Github, Activity, Trash2, Loader2, AlertCircle,
   RefreshCw,
 } from 'lucide-react';
-
-const NODE_API = 'http://localhost:8080';
 
 interface NodeStatus {
   chain_id: string;
@@ -38,33 +36,44 @@ export function ChainDetail({ chainId, onBack }: ChainDetailProps) {
   const [nodeStatus, setNodeStatus] = useState<NodeStatus | null>(null);
   const [nodeReachable, setNodeReachable] = useState<boolean | null>(null);
 
-  const pollNodeStatus = useCallback(async () => {
+  const pollNodeStatus = useCallback(async (signal?: AbortSignal) => {
+    if (!chain) return;
     try {
-      const res = await fetch(`${NODE_API}/api/status`);
-      const data: NodeStatus = await res.json();
-      setNodeStatus(data);
+      const res = await fetch(`${SERVICE_URL}/api/chains/${encodeURIComponent(chain.chain_id)}`, { signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const local: LocalChain = await res.json();
+      const status = local.nodes.find(({ status }) => status.running && typeof status.height === 'number')?.status;
+      if (!status || local.chain_id !== chain.chain_id) throw new Error('No running node for this chain');
+      if (signal?.aborted) return;
+      setNodeStatus({
+        chain_id: local.chain_id,
+        environment: status.environment ?? chain.config.environment.mode,
+        engine_version: status.engine_version ?? chain.engine_version,
+        height: status.height ?? 0,
+        peer_count: status.peer_count ?? 0,
+        state_root: status.state_root ?? null,
+        is_running: status.running,
+      });
       setNodeReachable(true);
     } catch {
+      if (signal?.aborted) return;
       setNodeReachable(false);
       setNodeStatus(null);
     }
-  }, []);
+  }, [chain]);
 
-  useEffect(() => {
-    loadChain();
-    pollNodeStatus();
-    const interval = setInterval(pollNodeStatus, 2000);
-    return () => clearInterval(interval);
-  }, [chainId, pollNodeStatus]);
-
-  const loadChain = async () => {
+  const loadChain = useCallback(async (signal: AbortSignal) => {
     setLoading(true);
+    setChain(null);
+    setError(null);
     if (!supabase) { setError('Supabase not configured.'); setLoading(false); return; }
     const { data, error } = await supabase
       .from('chains')
       .select('*')
       .eq('id', chainId)
+      .abortSignal(signal)
       .maybeSingle();
+    if (signal.aborted) return;
     if (error) {
       setError(error.message);
     } else if (!data) {
@@ -73,7 +82,25 @@ export function ChainDetail({ chainId, onBack }: ChainDetailProps) {
       setChain(data as Chain);
     }
     setLoading(false);
-  };
+  }, [chainId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadChain(controller.signal);
+    return () => controller.abort();
+  }, [loadChain]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setNodeStatus(null);
+    setNodeReachable(null);
+    void pollNodeStatus(controller.signal);
+    const interval = setInterval(() => void pollNodeStatus(controller.signal), 2000);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
+  }, [pollNodeStatus]);
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -273,14 +300,14 @@ export function ChainDetail({ chainId, onBack }: ChainDetailProps) {
                 }`} />
                 <span className="text-sm text-ink-200">
                   {nodeReachable === true
-                    ? 'Node reachable at localhost:8080'
+                    ? 'Node reachable through Chain Forge'
                     : nodeReachable === false
-                    ? 'Node not reachable — start chain-forge-node to connect'
+                    ? 'No running node found for this chain'
                     : 'Checking node status...'}
                 </span>
               </div>
               <button
-                onClick={pollNodeStatus}
+                onClick={() => void pollNodeStatus()}
                 className="btn-ghost p-1.5"
                 title="Refresh"
               >
@@ -338,10 +365,7 @@ export function ChainDetail({ chainId, onBack }: ChainDetailProps) {
               </div>
             ) : nodeReachable === false ? (
               <div className="card p-6">
-                <p className="text-xs text-ink-400 font-mono mb-2">Start the node with:</p>
-                <pre className="text-xs text-forge-300 font-mono bg-ink-900 p-3 rounded-lg overflow-x-auto">
-{`.\\target\\release\\chain-forge-node.exe --genesis qcb-genesis.json --api-port 8080`}
-                </pre>
+                <p className="text-sm text-ink-300">Start this chain from the local Chain Forge service, then refresh.</p>
               </div>
             ) : null}
           </div>
