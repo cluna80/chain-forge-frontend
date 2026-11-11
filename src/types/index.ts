@@ -36,11 +36,13 @@ export interface ChainConfig {
     mechanism: 'pos' | 'poa';
     validatorSetSize: number;
     blockTimeMs: number;
+    personhoodWeighted: boolean;
   };
   execution: {
     stateModel: 'account' | 'utxo' | 'hybrid';
     parallelExecution: boolean;
     gasModel: 'fixed' | 'dynamic' | 'eip-1559-style';
+    requireSignatures: boolean;
   };
   modules: {
     selected: string[];
@@ -105,4 +107,27 @@ export interface EngineModule {
   description: string;
   category: string;
   available: boolean;
+  required?: boolean;
+  requires?: string[];
+}
+
+export interface LocalChain {
+  chain_id: string;
+  dir: string;
+  genesis?: Record<string, unknown>;
+  nodes: {
+    validator: string;
+    api_url: string;
+    p2p_port: number;
+    status: {
+      running: boolean;
+      api?: string;
+      exit_code?: number;
+      height?: number;
+      peer_count?: number;
+      environment?: string;
+      engine_version?: string;
+      state_root?: string | null;
+    };
+  }[];
 }
