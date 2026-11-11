@@ -15,6 +15,8 @@
 //! starts processes. Private keys are written under the data directory
 //! and never returned over HTTP.
 
+mod qattice;
+
 use chain_forge_service::*;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -26,7 +28,8 @@ use tokio::process::{Child, Command};
 
 struct Node {
     validator: String,
-    api_port:  u16,
+    api_port:  Option<u16>,
+    status_file: Option<PathBuf>,
     p2p_port:  u16,
     log_path:  PathBuf,
     child:     Child,
@@ -44,6 +47,7 @@ struct Config {
     data_dir:     PathBuf,
     allow_origin: String,
     node_bin:     PathBuf,
+    pq_devnet_bin: PathBuf,
 }
 
 fn parse_args() -> Config {
@@ -56,6 +60,7 @@ fn parse_args() -> Config {
         port: 7700,
         data_dir: home.join(".chain-forge"),
         allow_origin: "http://localhost:5173".into(),
+        pq_devnet_bin: exe_dir.join(format!("pq-devnet-node{}", std::env::consts::EXE_SUFFIX)),
         node_bin: exe_dir.join(format!("chain-forge-node{}", std::env::consts::EXE_SUFFIX)),
     };
     let args: Vec<String> = std::env::args().collect();
@@ -66,9 +71,10 @@ fn parse_args() -> Config {
             "--port"         => { cfg.port = next.and_then(|v| v.parse().ok()).unwrap_or(7700); i += 1; }
             "--data-dir"     => { if let Some(v) = next { cfg.data_dir = v.into(); } i += 1; }
             "--allow-origin" => { if let Some(v) = next { cfg.allow_origin = v; } i += 1; }
+            "--pq-devnet-bin" => { if let Some(v) = next { cfg.pq_devnet_bin = v.into(); } i += 1; }
             "--node-bin"     => { if let Some(v) = next { cfg.node_bin = v.into(); } i += 1; }
             "--help" | "-h"  => {
-                println!("chain-forge-service [--port 7700] [--data-dir <dir>] [--allow-origin <url>] [--node-bin <path>]");
+                println!("chain-forge-service [--port 7700] [--data-dir <dir>] [--allow-origin <url>] [--node-bin <path>] [--pq-devnet-bin <path>]");
                 std::process::exit(0);
             }
             other => { eprintln!("unknown argument: {other}"); std::process::exit(2); }
@@ -188,9 +194,19 @@ async fn route(method: &str, path: &str, body: &str, cfg: &Config, chains: &Chai
             "version": env!("CARGO_PKG_VERSION"),
             "node_binary": cfg.node_bin.display().to_string(),
             "node_binary_found": cfg.node_bin.exists(),
+            "pq_devnet_binary_found": cfg.pq_devnet_bin.is_file(),
             "data_dir": cfg.data_dir.display().to_string(),
         })),
-        ("POST", ["api", "chains"]) => create_chain(body, cfg, chains).await,
+        ("POST", ["api", "chains"]) | ("POST", ["api", "qattice-devnets"]) => {
+            // Serialize project creation across both launchers.
+            static CREATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+            let _launch = CREATE.lock().await;
+            if parts[1] == "qattice-devnets" {
+                qattice::create(body, cfg, chains).await
+            } else {
+                create_chain(body, cfg, chains).await
+            }
+        },
         ("GET", ["api", "chains"]) => {
             let ids: Vec<String> = chains.lock().unwrap().keys().cloned().collect();
             let mut out = Vec::new();
@@ -248,6 +264,9 @@ async fn create_chain(body: &str, cfg: &Config, chains: &Chains) -> (u16, Value)
 
     // Files: <data>/<chain_id>/{genesis.json, keys/, logs/}
     let dir = cfg.data_dir.join(&id);
+    if dir.join("pqdev-0").exists() {
+        return (409, json!({ "error": "This chain ID belongs to a Qattice devnet." }));
+    }
     let write = || -> std::io::Result<PathBuf> {
         std::fs::create_dir_all(dir.join("keys"))?;
         std::fs::create_dir_all(dir.join("logs"))?;
@@ -292,7 +311,7 @@ async fn create_chain(body: &str, cfg: &Config, chains: &Chains) -> (u16, Value)
         });
         match spawned {
             Ok(child) => nodes.push(Node {
-                validator: validator.clone(), api_port, p2p_port: *p2p_port, log_path, child,
+                validator: validator.clone(), api_port: Some(api_port), status_file: None, p2p_port: *p2p_port, log_path, child,
             }),
             Err(e) => {
                 drop(nodes); // stop any already started
@@ -310,26 +329,30 @@ async fn create_chain(body: &str, cfg: &Config, chains: &Chains) -> (u16, Value)
 
 /// A chain's nodes with live status from each node's own API.
 async fn describe(id: &str, chains: &Chains) -> Option<Value> {
-    let (dir, snapshot): (PathBuf, Vec<(String, u16, u16, Option<i32>)>) = {
+    let (dir, snapshot): (PathBuf, Vec<(String, Option<u16>, u16, Option<i32>, Option<PathBuf>)>) = {
         let mut map = chains.lock().unwrap();
         let chain = map.get_mut(id)?;
         let snap = chain.nodes.iter_mut().map(|n| {
             let exit = n.child.try_wait().ok().flatten().map(|s| s.code().unwrap_or(-1));
-            (n.validator.clone(), n.api_port, n.p2p_port, exit)
+            (n.validator.clone(), n.api_port, n.p2p_port, exit, n.status_file.clone())
         }).collect();
         (chain.dir.clone(), snap)
     };
     let mut nodes = Vec::new();
-    for (validator, api_port, p2p_port, exited) in snapshot {
-        let status = match exited {
-            Some(code) => json!({ "running": false, "exit_code": code }),
-            None => node_status(api_port).await
-                .map(|s| { let mut s = s; s["running"] = json!(true); s })
-                .unwrap_or(json!({ "running": true, "api": "starting" })),
+    for (validator, api_port, p2p_port, exited, status_file) in snapshot {
+        let starting = || json!({ "running": true, "api": "starting" });
+        let status = if let Some(code) = exited {
+            json!({ "running": false, "exit_code": code })
+        } else if let Some(port) = api_port {
+            node_status(port).await
+                .map(|mut status| { status["running"] = json!(true); status })
+                .unwrap_or_else(starting)
+        } else {
+            status_file.as_deref().and_then(qattice::status).unwrap_or_else(starting)
         };
         nodes.push(json!({
             "validator": validator,
-            "api_url": format!("http://127.0.0.1:{api_port}"),
+            "api_url": api_port.map(|port| format!("http://127.0.0.1:{port}")),
             "p2p_port": p2p_port,
             "status": status,
         }));
