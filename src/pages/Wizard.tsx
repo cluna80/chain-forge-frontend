@@ -199,11 +199,23 @@ function configProblems(config: ChainConfig): string[] {
 
 export function Wizard({ onDone, onCancel }: WizardProps) {
   const [step, setStep] = useState(0);
+  const [qattice, setQattice] = useState(false);
+  const [qatticeId, setQatticeId] = useState('qattice-devnet');
   const [config, setConfig] = useState<ChainConfig>(DEFAULT_CONFIG);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [generated, setGenerated] = useState<Chain | null>(null);
   const [launched, setLaunched] = useState<LocalChain | null>(null);
+
+  // When the Qattice devnet form opens, check whether that chain ID is already
+  // running in the service and show its status immediately if so.
+  useEffect(() => {
+    if (!qattice || launched) return;
+    fetch(`${SERVICE_URL}/api/chains/${encodeURIComponent(qatticeId.trim())}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (data) setLaunched(data as LocalChain); })
+      .catch(() => { /* service not running yet — stay on the create form */ });
+  }, [qattice]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Fill all wizard fields with QCB's production settings. */
   const applyQcbTemplate = () => {
@@ -395,6 +407,68 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
     setSaving(false);
   };
 
+  const launchQattice = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const response = await fetch(`${SERVICE_URL}/api/qattice-devnets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chain_id: qatticeId.trim() }),
+      });
+      const result = await response.json();
+      if (response.status === 409) {
+        // Chain is already running — fetch current status and show it.
+        const statusRes = await fetch(`${SERVICE_URL}/api/chains/${encodeURIComponent(qatticeId.trim())}`);
+        if (statusRes.ok) {
+          setLaunched((await statusRes.json()) as LocalChain);
+        } else {
+          setSaveError(result.error ?? 'Chain is already running — refresh the service status page.');
+        }
+        return;
+      }
+      if (!response.ok) {
+        setSaveError(result.error ?? `Launch failed (HTTP ${response.status}).`);
+        return;
+      }
+      setLaunched(result as LocalChain);
+    } catch {
+      setSaveError('Start the local Chain Forge service with --pq-devnet-bin, then try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (qattice) {
+    return (
+      <div className="p-8 max-w-4xl">
+        <button disabled={saving} onClick={onCancel} className="btn-ghost flex items-center gap-2 mb-5">
+          <ArrowLeft size={16} /> Back to dashboard
+        </button>
+        <h1 className="text-2xl font-bold text-white mb-2">Create Qattice Devnet</h1>
+        <p className="text-sm text-ink-300 mb-6">Private local devnet · PQ-HotStuff-2 · ML-DSA-65 · Interim execution</p>
+        {launched ? <LaunchedChain initial={launched} /> : (
+          <form className="card p-6 space-y-4" onSubmit={(event) => {
+            event.preventDefault();
+            void launchQattice();
+          }}>
+            <div>
+              <label htmlFor="qattice-chain-id" className="block text-sm text-white mb-2">Chain ID</label>
+              <input id="qattice-chain-id" className="input-field w-full" value={qatticeId}
+                onChange={(event) => setQatticeId(event.target.value)} maxLength={64} required disabled={saving} />
+            </div>
+            <p className="text-sm text-ink-300">Creates four local validators with fresh signing keys in a new data directory.</p>
+            {saveError && <Warn>{saveError}</Warn>}
+            <button type="submit" disabled={saving || !qatticeId.trim()} className="btn-primary flex items-center gap-2">
+              {saving ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+              {saving ? 'Creating devnet…' : 'Launch four validators'}
+            </button>
+          </form>
+        )}
+      </div>
+    );
+  }
+
   const currentId = STEPS[step].id;
   const done = generated !== null || launched !== null;
 
@@ -407,7 +481,11 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
             Configure a blockchain on the Chain Forge engine
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <button onClick={() => { setSaveError(null); setQattice(true); }} disabled={saving || done}
+            className="btn-primary flex items-center gap-2">
+            <Play size={14} /> Create Qattice Devnet
+          </button>
           <button
             onClick={applyQcbTemplate}
             className="flex items-center gap-2 rounded-lg border border-purple-500/40 bg-purple-500/10 px-3 py-1.5 text-xs font-medium text-purple-300 hover:bg-purple-500/20 transition-colors"
@@ -1456,6 +1534,7 @@ function LaunchedChain({ initial }: { initial: LocalChain }) {
     }
   };
 
+  const hasWatermarks = chain.nodes.some(({ status }) => status.pruned_watermark != null);
   const allUp = chain.nodes.length > 0 && chain.nodes.every((n) => n.status.running && (n.status.height ?? 0) > 0);
 
   return (
@@ -1481,6 +1560,9 @@ function LaunchedChain({ initial }: { initial: LocalChain }) {
       </div>
 
       {error && <Warn>{error}</Warn>}
+      {chain.nodes.filter(({ status }) => status.fatal).map(({ validator, status }) => (
+        <Warn key={validator}>{validator}: {status.fatal}</Warn>
+      ))}
 
       <div className="card p-4 mb-4">
         <div className="grid grid-cols-12 text-xs text-ink-400 uppercase tracking-wider mb-2">
@@ -1488,7 +1570,7 @@ function LaunchedChain({ initial }: { initial: LocalChain }) {
           <span className="col-span-2">State</span>
           <span className="col-span-2 text-right">Height</span>
           <span className="col-span-1 text-right">Peers</span>
-          <span className="col-span-2 text-right">API</span>
+          <span className="col-span-2 text-right">{hasWatermarks ? 'Watermark' : 'API'}</span>
         </div>
         {chain.nodes.map((n) => (
           <div key={n.validator} className="grid grid-cols-12 text-sm py-1 border-t border-ink-700/50">
@@ -1498,15 +1580,19 @@ function LaunchedChain({ initial }: { initial: LocalChain }) {
             </span>
             <span className="col-span-2 text-right font-mono text-white">{n.status.height ?? '—'}</span>
             <span className="col-span-1 text-right font-mono text-white">{n.status.peer_count ?? '—'}</span>
-            <a href={`${n.api_url}/api/status`} target="_blank" rel="noreferrer"
-              className="col-span-2 text-right text-forge-400 hover:underline font-mono text-xs">status</a>
+            <span className="col-span-2 text-right font-mono text-xs">
+              {hasWatermarks ? n.status.pruned_watermark ?? '—' : n.api_url ? (
+                <a href={`${n.api_url}/api/status`} target="_blank" rel="noreferrer"
+                  className="text-forge-400 hover:underline">status</a>
+              ) : '—'}
+            </span>
           </div>
         ))}
       </div>
 
       <p className="text-xs text-ink-400">
         Files (genesis, logs, and private keys) are in <span className="font-mono">{chain.dir}</span>.
-        State is in memory: stopping the chain discards it, and the next launch starts from genesis.
+        Stop preserves the project files on disk.
       </p>
     </div>
   );
