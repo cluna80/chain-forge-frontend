@@ -33,8 +33,7 @@ const STEPS = [
 const newAccountId = () => `acct_${Math.random().toString(36).slice(2, 10)}`;
 
 // ── QCB Chain template ────────────────────────────────────────────────────────
-// One-click fill with QCB's exact production settings.
-// Matches qcb-genesis.json and the whitepaper v0.3.0.
+// Historical QCB settings for the bundled local launcher.
 const QCB_TEMPLATE: Partial<ChainConfig> = {
   basics: {
     chainName:     'QCB Chain',
@@ -412,10 +411,10 @@ export function Wizard({ onDone, onCancel }: WizardProps) {
           <button
             onClick={applyQcbTemplate}
             className="flex items-center gap-2 rounded-lg border border-purple-500/40 bg-purple-500/10 px-3 py-1.5 text-xs font-medium text-purple-300 hover:bg-purple-500/20 transition-colors"
-            title="Fill all fields with QCB Chain's production settings"
+            title="Fill the wizard with the legacy QCB template"
           >
             <Cpu size={12} />
-            QCB Template
+            Legacy QCB Template
           </button>
           <button onClick={onCancel} className="btn-ghost flex items-center gap-2">
             <X size={16} />
@@ -1445,7 +1444,12 @@ function LaunchedChain({ initial }: { initial: LocalChain }) {
 
   const stop = async () => {
     try {
-      await fetch(`${SERVICE_URL}/api/chains/${encodeURIComponent(initial.chain_id)}/stop`, { method: 'POST' });
+      const response = await fetch(`${SERVICE_URL}/api/chains/${encodeURIComponent(initial.chain_id)}/stop`, { method: 'POST' });
+      if (!response.ok) {
+        setError(`Chain Forge could not stop the chain (HTTP ${response.status}).`);
+        return;
+      }
+      setError(null);
       setStopped(true);
     } catch {
       setError('Could not reach the Chain Forge service to stop the chain.');

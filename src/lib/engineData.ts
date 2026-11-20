@@ -119,9 +119,3 @@ export const ENGINE_MODULES: EngineModule[] = [
     requires: ['identity'],
   },
 ];
-
-// Every step is usable, including Generate: the local service can now run
-// the chain on this machine.
-export function getLayerStatusForWizardStep(_stepId: string): 'ready' | 'coming-soon' {
-  return 'ready';
-}
