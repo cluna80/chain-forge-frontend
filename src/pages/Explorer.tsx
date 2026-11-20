@@ -1,24 +1,23 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Search, RefreshCw, Wifi, WifiOff,
-  Users, Layers, ShieldCheck, Zap,
+  Users, Layers, ShieldCheck,
   ChevronRight, AlertCircle,
 } from 'lucide-react';
 import {
   DEFAULT_NODE_URL,
-  fetchStatus, fetchAccounts, fetchBlocks, fetchValidators, fetchQrc,
+  fetchStatus, fetchAccounts, fetchBlocks, fetchValidators,
   fetchIdentity,
   type NodeStatus, type AccountEntry, type BlockSummary,
-  type ValidatorEntry, type QrcMetrics, type IdentityTier,
+  type ValidatorEntry, type IdentityTier,
 } from '@/lib/nodeApi';
 
-type Tab = 'accounts' | 'blocks' | 'validators' | 'qrc';
+type Tab = 'accounts' | 'blocks' | 'validators';
 
 const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: 'accounts',   label: 'Accounts',   icon: Users },
   { id: 'blocks',     label: 'Blocks',     icon: Layers },
   { id: 'validators', label: 'Validators', icon: ShieldCheck },
-  { id: 'qrc',        label: 'QRC Pool',   icon: Zap },
 ];
 
 function Spinner() {
@@ -235,36 +234,6 @@ function ValidatorsPanel({ base }: { base: string }) {
   );
 }
 
-function QrcPanel({ base }: { base: string }) {
-  const [data, setData] = useState<QrcMetrics | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    fetchQrc(base)
-      .then(setData)
-      .catch((e: Error) => setErr(e.message))
-      .finally(() => setLoading(false));
-  }, [base]);
-
-  if (loading) return <Spinner />;
-  if (err) return <ErrorBox message={err} />;
-  if (!data) return null;
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <MetricTile label="Total Supply" value={data.total_supply} unit="QRC" />
-        <MetricTile label="Circulating"  value={data.circulating}  unit="QRC" />
-        {data.pool_qcb  && <MetricTile label="Pool QCB"  value={data.pool_qcb}  unit="QCB" />}
-        {data.pool_qrc  && <MetricTile label="Pool QRC"  value={data.pool_qrc}  unit="QRC" />}
-        {data.price_qcb && <MetricTile label="Price"     value={data.price_qcb} unit="QCB/QRC" />}
-      </div>
-    </div>
-  );
-}
-
 // ── Shared micro-components ─────────────────────────────────────────────────
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
@@ -400,10 +369,9 @@ export function Explorer() {
 
       {/* Tab content */}
       <div className="card p-5">
-        {tab === 'accounts'   && <AccountsPanel   key={`acc-${nodeUrl}-${refreshKey}`}   base={nodeUrl} />}
-        {tab === 'blocks'     && <BlocksPanel     key={`blk-${nodeUrl}-${refreshKey}`}   base={nodeUrl} />}
-        {tab === 'validators' && <ValidatorsPanel key={`val-${nodeUrl}-${refreshKey}`}   base={nodeUrl} />}
-        {tab === 'qrc'        && <QrcPanel        key={`qrc-${nodeUrl}-${refreshKey}`}   base={nodeUrl} />}
+        {tab === 'accounts'   && <AccountsPanel   key={`acc-${nodeUrl}-${refreshKey}`} base={nodeUrl} />}
+        {tab === 'blocks'     && <BlocksPanel     key={`blk-${nodeUrl}-${refreshKey}`} base={nodeUrl} />}
+        {tab === 'validators' && <ValidatorsPanel key={`val-${nodeUrl}-${refreshKey}`} base={nodeUrl} />}
       </div>
     </div>
   );
