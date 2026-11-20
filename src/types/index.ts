@@ -113,14 +113,19 @@ export interface EngineModule {
 
 export interface LocalChainNode {
   validator: string;
-  api_url: string;
+  api_url: string | null;
+  p2p_port: number;
   status: {
     running: boolean;
-    height?: number;
-    peers?: number;
-    peer_count?: number;
-    exit_code?: number | null;
     api?: string;
+    exit_code?: number | null;
+    height?: number;
+    peer_count?: number;
+    environment?: string;
+    engine_version?: string;
+    state_root?: string | null;
+    pruned_watermark?: number | null;
+    fatal?: string | null;
   };
 }
 
