@@ -38,7 +38,7 @@ interface ChainSpec {
   block_time_ms: number;
 }
 
-function defaultTemplateConfig(templateId: string): Record<string, unknown> {
+function defaultTemplateConfig(templateId: string): { type: string } & Record<string, unknown> {
   switch (templateId) {
     case 'healthcare-l1':
       return {
