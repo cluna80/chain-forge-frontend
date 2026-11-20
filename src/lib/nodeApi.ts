@@ -165,3 +165,52 @@ export function submitTx(
   const tx: Transaction = { id, sender, nonce, body, gas_limit: gasLimit };
   return post<TxResponse>(base, '/api/tx', tx);
 }
+
+// ── Institutional Builder API ───────────────────────────────────────────────
+// All calls go to the local chain-forge-service (default port 7700).
+
+export const SERVICE_BASE = 'http://127.0.0.1:7700';
+
+export interface InstitutionalTemplateInfo {
+  id: string;
+  name: string;
+  description: string;
+  default_validator_count: number;
+  default_crypto: string;
+  default_consensus: string;
+  modules: string[];
+}
+
+export interface InstitutionalValidateResult {
+  valid: boolean;
+  chain_id?: string;
+  template?: string;
+  validator_count?: number;
+  domain_separator?: string;
+  error?: string;
+}
+
+export interface InstitutionalGenerateResult {
+  chain_id: string;
+  template: string;
+  domain_separator: string;
+  genesis_hash: string;
+  artifacts_dir: string;
+  artifacts: string[];
+}
+
+export function fetchInstitutionalTemplates() {
+  return get<InstitutionalTemplateInfo[]>(SERVICE_BASE, '/api/institutional/templates');
+}
+
+export function validateInstitutionalSpec(spec: unknown) {
+  return post<InstitutionalValidateResult>(SERVICE_BASE, '/api/institutional/validate', spec);
+}
+
+export function generateInstitutionalChain(spec: unknown) {
+  return post<InstitutionalGenerateResult>(SERVICE_BASE, '/api/institutional/generate', spec);
+}
+
+export function fetchInstitutionalArtifact(chainId: string, filename: string) {
+  return get<Record<string, unknown>>(SERVICE_BASE, `/api/institutional/artifacts/${chainId}/${filename}`);
+}

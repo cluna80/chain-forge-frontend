@@ -2,12 +2,13 @@ import { type ReactNode } from 'react';
 import { Logo } from '@/components/Logo';
 import {
   LayoutDashboard, Plus, Activity, Search, Send,
-  Server, Zap, Trophy, Building2,
+  Server, Zap, Trophy, Building2, Landmark,
 } from 'lucide-react';
 
 type Page =
   | 'dashboard' | 'wizard' | 'detail' | 'engine' | 'explorer' | 'tx'
-  | 'machines' | 'jobs' | 'contribution' | 'challenge' | 'enterprise';
+  | 'machines' | 'jobs' | 'contribution' | 'challenge' | 'enterprise'
+  | 'institutional';
 
 interface LayoutProps {
   current: Page;
@@ -40,7 +41,8 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Identity',
     items: [
-      { id: 'enterprise', label: 'Enterprise',   icon: Building2 },
+      { id: 'enterprise',    label: 'Enterprise',    icon: Building2 },
+      { id: 'institutional', label: 'Institutional', icon: Landmark },
     ],
   },
   {

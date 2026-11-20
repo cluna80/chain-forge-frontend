@@ -11,9 +11,10 @@ import { ResourceJobs } from '@/pages/ResourceJobs';
 import { Contribution } from '@/pages/Contribution';
 import { GrandChallenge } from '@/pages/GrandChallenge';
 import { Enterprise } from '@/pages/Enterprise';
+import { InstitutionalBuilder } from '@/pages/InstitutionalBuilder';
 import type { Chain } from '@/types';
 
-type Page = 'dashboard' | 'wizard' | 'detail' | 'engine' | 'explorer' | 'tx' | 'machines' | 'jobs' | 'contribution' | 'challenge' | 'enterprise';
+type Page = 'dashboard' | 'wizard' | 'detail' | 'engine' | 'explorer' | 'tx' | 'machines' | 'jobs' | 'contribution' | 'challenge' | 'enterprise' | 'institutional';
 
 export default function App() {
   const [page, setPage] = useState<Page>('dashboard');
@@ -56,7 +57,8 @@ export default function App() {
       {page === 'jobs'         && <ResourceJobs />}
       {page === 'contribution' && <Contribution />}
       {page === 'challenge'    && <GrandChallenge />}
-      {page === 'enterprise'   && <Enterprise />}
+      {page === 'enterprise'    && <Enterprise />}
+      {page === 'institutional' && <InstitutionalBuilder />}
     </Layout>
   );
 }
