@@ -52,12 +52,12 @@ export const ENGINE_LAYERS: EngineLayer[] = [
     version: '0.1.0',
     details: [
       'Sequential transaction execution — implemented',
-      'Ed25519 transaction signatures with per-account key binding — implemented',
+      'Ed25519 and ML-DSA-65 transaction signatures with per-account key binding — implemented',
       'Module gating (genesis decides which transaction types exist) — implemented',
       'Gas metering: fixed, dynamic and EIP-1559-style calculation — implemented',
       'Parallel execution — not started (setting is recorded, not used)',
       'UTXO and hybrid state models — not started (account model only)',
-      'Post-quantum transaction signatures — not started (setting is recorded, not used)',
+      'Post-quantum transaction signatures — implemented: `signature_scheme = "pqc-native"` refuses Ed25519-signed and unsigned txs at API admission, gossip intake and execution; proven by mldsa_only_accounts_live A-01..A-09 (Windows-confirmed)',
     ],
   },
   {
