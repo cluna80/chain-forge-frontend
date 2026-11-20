@@ -117,7 +117,7 @@ export interface LocalChain {
   genesis?: Record<string, unknown>;
   nodes: {
     validator: string;
-    api_url: string;
+    api_url: string | null;
     p2p_port: number;
     status: {
       running: boolean;
@@ -128,6 +128,8 @@ export interface LocalChain {
       environment?: string;
       engine_version?: string;
       state_root?: string | null;
+      pruned_watermark?: number | null;
+      fatal?: string | null;
     };
   }[];
 }
