@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { ENGINE_MODULES, ENGINE_VERSION, SERVICE_URL } from '@/lib/engineData';
 import type {
@@ -10,6 +10,7 @@ import {
   ArrowLeft, ArrowRight, Check, Loader2, AlertCircle,
   Settings, Cpu, Layers, Boxes, FileJson, X, Shield,
   Globe, Network, Gauge, Users, Plus, Trash2, Play, Square, Save,
+  Terminal, ChevronDown, ChevronUp,
 } from 'lucide-react';
 
 interface WizardProps {
@@ -1590,10 +1591,126 @@ function LaunchedChain({ initial }: { initial: LocalChain }) {
         ))}
       </div>
 
-      <p className="text-xs text-ink-400">
+      <NodeLogViewer chainId={chain.chain_id} validators={chain.nodes.map((n) => n.validator)} stopped={stopped} />
+
+      <p className="text-xs text-ink-400 mt-4">
         Files (genesis, logs, and private keys) are in <span className="font-mono">{chain.dir}</span>.
         Stop preserves the project files on disk.
       </p>
     </div>
   );
+}
+
+/** Collapsible live log viewer for one validator at a time. */
+function NodeLogViewer({
+  chainId, validators, stopped,
+}: { chainId: string; validators: string[]; stopped: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState(validators[0] ?? '');
+  const [lines, setLines] = useState<string[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const autoScroll = useRef(true);
+
+  // Reset selected validator if list changes (e.g. after restart).
+  useEffect(() => {
+    if (!validators.includes(selected) && validators.length > 0) {
+      setSelected(validators[0]);
+      setLines([]);
+    }
+  }, [validators, selected]);
+
+  // Poll logs while the panel is open and the chain is running.
+  useEffect(() => {
+    if (!open || stopped || !selected) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `${SERVICE_URL}/api/chains/${encodeURIComponent(chainId)}/logs/${encodeURIComponent(selected)}`
+        );
+        if (cancelled) return;
+        if (!res.ok) { setErr(`HTTP ${res.status}`); return; }
+        const text = await res.text();
+        setLines(text.split('\n'));
+        setErr(null);
+      } catch {
+        if (!cancelled) setErr('Could not reach the Chain Forge service.');
+      }
+    };
+
+    void poll();
+    const timer = setInterval(poll, 2500);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [open, stopped, chainId, selected]);
+
+  // Auto-scroll to bottom when new lines arrive (unless user scrolled up).
+  useEffect(() => {
+    if (autoScroll.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+    }
+  }, [lines]);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    autoScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  };
+
+  return (
+    <div className="mt-4 rounded-lg border border-ink-700 overflow-hidden">
+      {/* Header / toggle */}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-2.5 bg-ink-900 hover:bg-ink-800 transition-colors"
+      >
+        <div className="flex items-center gap-2 text-sm text-ink-300">
+          <Terminal size={14} className="text-forge-400" />
+          <span className="font-medium text-white">Node Logs</span>
+          {open && (
+            <select
+              value={selected}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => { setSelected(e.target.value); setLines([]); }}
+              className="ml-2 bg-ink-800 border border-ink-600 rounded px-2 py-0.5 text-xs text-ink-200 font-mono"
+            >
+              {validators.map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+          )}
+        </div>
+        {open ? <ChevronUp size={14} className="text-ink-400" /> : <ChevronDown size={14} className="text-ink-400" />}
+      </button>
+
+      {/* Log body */}
+      {open && (
+        <div
+          onScroll={handleScroll}
+          className="bg-black/80 h-72 overflow-y-auto font-mono text-xs leading-relaxed p-3"
+        >
+          {err ? (
+            <p className="text-danger-400">{err}</p>
+          ) : lines.length === 0 ? (
+            <p className="text-ink-500 italic">Waiting for log output…</p>
+          ) : (
+            lines.map((line, i) => (
+              <LogLine key={i} line={line} />
+            ))
+          )}
+          <div ref={bottomRef} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Colour-codes a single log line by level keyword. */
+function LogLine({ line }: { line: string }) {
+  if (!line) return <br />;
+  const cls =
+    /\bERROR\b|\bFATAL\b/i.test(line) ? 'text-danger-400' :
+    /\bWARN\b/i.test(line)            ? 'text-warn-400'   :
+    /\bINFO\b/i.test(line)            ? 'text-ink-200'    :
+    /\bDEBUG\b|\bTRACE\b/i.test(line) ? 'text-ink-500'    :
+    'text-ink-300';
+  return <div className={cls}>{line}</div>;
 }
